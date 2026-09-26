@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, AlertCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { ApiError } from '../../api';
 
 export default function SignupPage() {
   const { signup } = useAuth();
@@ -37,8 +38,12 @@ export default function SignupPage() {
     try {
       await signup(form.loginId, form.email, form.password, form.role);
       navigate('/dashboard');
-    } catch {
-      setGlobalError('Email already registered. Please use a different email or sign in.');
+    } catch (err) {
+      setGlobalError(
+        err instanceof ApiError && err.status === 409
+          ? 'Email already registered. Please use a different email or sign in.'
+          : err instanceof Error ? err.message : 'Could not create account.',
+      );
     } finally {
       setLoading(false);
     }

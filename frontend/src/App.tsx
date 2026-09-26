@@ -24,7 +24,8 @@ import WarehousesPage from './pages/settings/WarehousesPage';
 import ProfilePage from './pages/ProfilePage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isLoading } = useAuth();
+  if (isLoading) return null; // restoring session from the refresh cookie
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }

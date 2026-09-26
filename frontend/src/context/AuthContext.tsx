@@ -1,69 +1,52 @@
-// Auth context for StockSense
-import React, { createContext, useContext, useState, useCallback } from 'react';
+// Auth context for StockSense — backed by the real API.
+// Session restore: on load we try /auth/refresh (httpOnly cookie); the access token stays in memory.
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import type { User } from '../types';
+import { auth } from '../api';
+import { refreshSession, setAccessToken, setSessionLostHandler } from '../api/client';
 
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
-  login: (email: string, _password: string) => Promise<void>;
-  signup: (name: string, email: string, _password: string, role: string) => Promise<void>;
+  /** True until the initial session restore finishes; don't redirect to /login while this is set. */
+  isLoading: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  signup: (name: string, email: string, password: string, role: string) => Promise<void>;
   logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-// Mock user data
-const MOCK_USER: User = {
-  id: 'u1',
-  name: 'Priya Sharma',
-  email: 'priya@stocksense.io',
-  role: 'INVENTORY_MANAGER',
-  createdAt: '2024-01-01',
-};
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
-    const stored = sessionStorage.getItem('ss_user');
-    if (stored) {
-      try {
-        return JSON.parse(stored);
-      } catch {
-        return MOCK_USER;
-      }
-    }
-    // Default to demo user for first session
-    sessionStorage.setItem('ss_user', JSON.stringify(MOCK_USER));
-    return MOCK_USER;
-  });
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const login = useCallback(async (email: string, _password: string) => {
-    // Simulate API call
-    await new Promise(res => setTimeout(res, 800));
-    const loggedUser = { ...MOCK_USER, email };
-    setUser(loggedUser);
-    sessionStorage.setItem('ss_user', JSON.stringify(loggedUser));
+  useEffect(() => {
+    setSessionLostHandler(() => setUser(null));
+    refreshSession()
+      .then(s => setUser(s?.user ?? null))
+      .finally(() => setIsLoading(false));
+    return () => setSessionLostHandler(null);
   }, []);
 
-  const signup = useCallback(async (name: string, email: string, _password: string, role: string) => {
-    await new Promise(res => setTimeout(res, 800));
-    const newUser: User = {
-      id: 'u-new',
-      name,
-      email,
-      role: role as User['role'],
-      createdAt: new Date().toISOString(),
-    };
-    setUser(newUser);
-    sessionStorage.setItem('ss_user', JSON.stringify(newUser));
+  const login = useCallback(async (email: string, password: string) => {
+    const s = await auth.login(email, password);
+    setUser(s.user);
+  }, []);
+
+  const signup = useCallback(async (name: string, email: string, password: string, role: string) => {
+    const s = await auth.signup(name, email, password, role);
+    setUser(s.user);
   }, []);
 
   const logout = useCallback(() => {
     setUser(null);
-    sessionStorage.removeItem('ss_user');
+    setAccessToken(null);
+    auth.logout().catch(() => {}); // cookie is cleared server-side; nothing to do if it fails
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, signup, logout }}>
+    <AuthContext.Provider value={{ user, isAuthenticated: !!user, isLoading, login, signup, logout }}>
       {children}
     </AuthContext.Provider>
   );

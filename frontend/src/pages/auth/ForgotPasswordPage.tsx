@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Mail, KeyRound, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import { auth } from '../../api';
 
 type Step = 'email' | 'otp';
 
@@ -14,6 +15,7 @@ export default function ForgotPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [devOtp, setDevOtp] = useState(''); // only returned by the API outside production
 
   const handleRequestOTP = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,9 +24,15 @@ export default function ForgotPasswordPage() {
       return setError('Enter a valid email address.');
     }
     setLoading(true);
-    await new Promise(res => setTimeout(res, 800));
-    setLoading(false);
-    setStep('otp');
+    try {
+      const r = await auth.forgotPassword(email.trim());
+      setDevOtp(r.devOtp ?? '');
+      setStep('otp');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not send OTP.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleResetPassword = async (e: React.FormEvent) => {
@@ -35,9 +43,14 @@ export default function ForgotPasswordPage() {
     if (newPassword !== confirmPassword) return setError('Passwords do not match.');
 
     setLoading(true);
-    await new Promise(res => setTimeout(res, 1000));
-    setLoading(false);
-    setSuccess(true);
+    try {
+      await auth.resetPassword(email.trim(), otp.trim(), newPassword);
+      setSuccess(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not reset password.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (success) {
@@ -83,6 +96,12 @@ export default function ForgotPasswordPage() {
           <div className="alert alert-error" role="alert">
             <AlertCircle size={16} style={{ flexShrink: 0 }} />
             <span>{error}</span>
+          </div>
+        )}
+
+        {step === 'otp' && devOtp && (
+          <div className="alert alert-info" role="status">
+            <span>Dev mode: no email is sent. Your OTP is <strong style={{ fontFamily: 'var(--font-mono)' }}>{devOtp}</strong></span>
           </div>
         )}
 

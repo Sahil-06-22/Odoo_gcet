@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, AlertCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { ApiError } from '../../api';
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -24,8 +25,12 @@ export default function LoginPage() {
     try {
       await login(email, password);
       navigate('/dashboard');
-    } catch {
-      setError('Invalid Login ID or Password. Please try again.');
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.status !== 401
+          ? err.message
+          : 'Invalid Login ID or Password. Please try again.',
+      );
     } finally {
       setLoading(false);
     }
