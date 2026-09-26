@@ -209,8 +209,6 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
                 <>
                   <div className="form-group">
                     <label className="form-label" htmlFor="prod-initial-stock">Initial Stock</label>
-                    <input id="prod-initial-stock" type="number" min="0" className="input" value={form.initialStock}
-                      onChange={e => setForm(prev => ({ ...prev, initialStock: parseInt(e.target.value) || 0 }))} />
                     <input
                       id="prod-initial-stock"
                       type="number"

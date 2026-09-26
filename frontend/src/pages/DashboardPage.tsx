@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Package, AlertTriangle, PackageCheck, Truck,
-  ArrowLeftRight, RotateCcw, ChevronRight, TrendingUp,
+  ArrowLeftRight, RotateCcw, ChevronRight, TrendingUp, Boxes,
 } from 'lucide-react';
 import { dashboard, receipts, deliveries, transfers } from '../api';
 import { useApi } from '../api/useApi';
@@ -27,11 +27,18 @@ export default function DashboardPage() {
   const [filter, setFilter] = useState<string>('ALL');
 
   const { data, loading, error, reload } = useApi(async () => {
-    const [k, r, d, t] = await Promise.all([dashboard.kpis(), receipts.list(), deliveries.list(), transfers.list()]);
-    return { k, r, d, t };
+    const [k, lowStockItems, opsData, r, d, t] = await Promise.all([
+      dashboard.kpis(),
+      dashboard.lowStock(),
+      dashboard.operations(),
+      receipts.list(),
+      deliveries.list(),
+      transfers.list(),
+    ]);
+    return { k, lowStockItems, opsData, r, d, t };
   });
   if (!data) return <AsyncState loading={loading} error={error} onRetry={reload} />;
-  const { k: kpiData, r: receiptList, d: deliveryList, t: transferList } = data;
+  const { k: kpiData, lowStockItems, opsData, r: receiptList, d: deliveryList, t: transferList } = data;
 
   const isOpen = (s: DocumentStatus) => s === 'DRAFT' || s === 'WAITING' || s === 'READY';
   const today = new Date().toISOString().slice(0, 10);
@@ -41,11 +48,13 @@ export default function DashboardPage() {
 
   const kpis = [
     { label: 'Total Products', value: kpiData.totalProducts, icon: Package, color: 'var(--color-info)', bg: 'var(--color-info-bg)', route: '/products' },
+    { label: 'In-Stock Products', value: kpiData.inStockProducts, icon: Boxes, color: 'var(--color-success)', bg: 'var(--color-success-bg)', route: '/stock' },
     { label: 'Low Stock Items', value: kpiData.lowStockItems, icon: AlertTriangle, color: 'var(--color-warning)', bg: 'var(--color-warning-bg)', route: '/products?status=LOW_STOCK' },
     { label: 'Out of Stock', value: kpiData.outOfStockItems, icon: AlertTriangle, color: 'var(--color-error)', bg: 'var(--color-error-bg)', route: '/products?status=OUT_OF_STOCK' },
     { label: 'Pending Receipts', value: kpiData.pendingReceipts, icon: PackageCheck, color: 'var(--color-accent)', bg: 'var(--color-accent-muted)', route: '/receipts' },
     { label: 'Pending Deliveries', value: kpiData.pendingDeliveries, icon: Truck, color: 'var(--color-success)', bg: 'var(--color-success-bg)', route: '/deliveries' },
     { label: 'Scheduled Transfers', value: kpiData.scheduledTransfers, icon: ArrowLeftRight, color: '#a78bfa', bg: 'rgba(167,139,250,0.15)', route: '/transfers' },
+    { label: 'Adjustments', value: opsData.adjustments, icon: RotateCcw, color: '#eab308', bg: 'rgba(234, 179, 8, 0.15)', route: '/adjustments' },
   ];
 
   // Build unified operations list
@@ -177,8 +186,86 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Receipt + Delivery Summary Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)', marginTop: 'var(--space-5)' }}>
+      {/* Low Stock Alerts */}
+      <div className="table-wrapper" style={{ marginTop: 'var(--space-6)' }}>
+        <div className="table-toolbar">
+          <span className="table-title" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+            <AlertTriangle size={16} style={{ color: 'var(--color-warning)' }} />
+            Low Stock & Reorder Alerts ({lowStockItems.length})
+          </span>
+          <div className="table-actions" style={{ marginLeft: 'auto' }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => navigate('/products?status=LOW_STOCK')}>
+              View All Low Stock <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
+
+        {lowStockItems.length === 0 ? (
+          <div className="empty-state" style={{ padding: 'var(--space-8)' }}>
+            <div className="empty-state-icon"><PackageCheck size={24} style={{ color: 'var(--color-success)' }} /></div>
+            <div className="empty-state-title">All products adequately stocked</div>
+            <p className="empty-state-desc">No products are currently at or below their reorder threshold.</p>
+          </div>
+        ) : (
+          <div className="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th>SKU</th>
+                  <th>Category</th>
+                  <th>Total Stock</th>
+                  <th>Status</th>
+                  <th>Reorder Threshold</th>
+                  <th>Suggested Order Qty</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {lowStockItems.map(item => (
+                  <tr key={item.productId} onClick={() => navigate('/products')} tabIndex={0}
+                    onKeyDown={e => e.key === 'Enter' && navigate('/products')}>
+                    <td>
+                      <span style={{ fontWeight: 600 }}>{item.name}</span>
+                    </td>
+                    <td>
+                      <span className="table-cell-mono" style={{ color: 'var(--color-accent)' }}>{item.sku}</span>
+                    </td>
+                    <td className="table-cell-muted">{item.category}</td>
+                    <td style={{ fontWeight: 700 }}>{item.totalStock}</td>
+                    <td>
+                      {item.stockStatus === 'OUT_OF_STOCK' ? (
+                        <span className="badge badge-out-of-stock">Out of Stock</span>
+                      ) : (
+                        <span className="badge badge-low-stock">Low Stock</span>
+                      )}
+                    </td>
+                    <td className="table-cell-muted">{item.reorderThreshold ?? '—'}</td>
+                    <td>
+                      <span style={{ color: 'var(--color-accent)', fontWeight: 600 }}>+{item.suggestedOrderQty}</span>
+                    </td>
+                    <td>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={e => {
+                          e.stopPropagation();
+                          navigate('/receipts/new');
+                        }}
+                        title="Draft receipt for restocking"
+                      >
+                        Reorder
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Operation Summary Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--space-4)', marginTop: 'var(--space-5)' }}>
         <div
           className="card"
           style={{ cursor: 'pointer' }}
@@ -230,6 +317,33 @@ export default function DashboardPage() {
               <div>{lateDeliveries} Late</div>
               <div>{waitingDeliveries} Waiting</div>
               <div>{deliveryList.length} operations</div>
+            </div>
+          </div>
+        </div>
+
+        <div
+          className="card"
+          style={{ cursor: 'pointer' }}
+          onClick={() => navigate('/adjustments')}
+          role="button"
+          tabIndex={0}
+          id="dash-adjustments-card"
+        >
+          <div className="card-header">
+            <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+              <RotateCcw size={18} style={{ color: 'var(--color-info)' }} /> Adjustments
+            </div>
+            <ChevronRight size={16} style={{ color: 'var(--color-text-muted)' }} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
+            <div>
+              <button className="btn btn-secondary" onClick={e => { e.stopPropagation(); navigate('/adjustments'); }}>
+                {opsData.adjustments} recorded
+              </button>
+            </div>
+            <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-muted)' }}>
+              <div>Audit discrepancies</div>
+              <div>Physical counts</div>
             </div>
           </div>
         </div>
