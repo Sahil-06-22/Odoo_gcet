@@ -1,0 +1,72 @@
+# ==========================================
+# StockSense — Git Ignore Configuration
+# ==========================================
+
+# Dependencies
+node_modules/
+*/node_modules/
+.pnp
+.pnp.js
+
+# Production Builds & Bundles
+dist/
+*/dist/
+build/
+*/build/
+out/
+*/out/
+dist-ssr/
+*.tsbuildinfo
+
+# Environment Variables & Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+
+# Logs & Debugging
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Testing & Coverage
+coverage/
+*.lcov
+.nyc_output/
+
+# Cache directories
+.cache/
+.vite/
+.eslintcache
+.oxlint_cache/
+
+# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDE & Editor Files
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.sublime-workspace
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Local database dumps and SQLite files
+*.sqlite
+*.sqlite3
+*.db

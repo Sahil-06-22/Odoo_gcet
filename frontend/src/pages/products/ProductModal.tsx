@@ -1,0 +1,166 @@
+// Product Create/Edit Modal
+import { useState } from 'react';
+import { X, Loader2 } from 'lucide-react';
+import type { Product } from '../../types';
+import { useToast } from '../../context/ToastContext';
+import { mockWarehouses } from '../../data/mockData';
+
+interface Props {
+  product: Product | null;
+  onClose: () => void;
+}
+
+export function ProductModal({ product, onClose }: Props) {
+  const { showToast } = useToast();
+  const isEdit = !!product;
+
+  const [form, setForm] = useState({
+    name: product?.name || '',
+    sku: product?.sku || '',
+    category: product?.category || '',
+    unitOfMeasure: product?.unitOfMeasure || 'Units',
+    initialStock: 0,
+    warehouseId: mockWarehouses[0]?.id || '',
+    reorderThreshold: product?.reorderThreshold || '',
+    reorderQty: product?.reorderQty || '',
+  });
+  const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const set = (field: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    setForm(prev => ({ ...prev, [field]: e.target.value }));
+
+  const validate = () => {
+    const errs: Record<string, string> = {};
+    if (!form.name.trim()) errs.name = 'Product name is required.';
+    if (!form.sku.trim()) errs.sku = 'SKU is required.';
+    if (!form.category.trim()) errs.category = 'Category is required.';
+    return errs;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const errs = validate();
+    if (Object.keys(errs).length) { setErrors(errs); return; }
+    setLoading(true);
+    await new Promise(res => setTimeout(res, 700));
+    setLoading(false);
+    showToast(isEdit ? 'Product updated successfully!' : 'Product created successfully!', 'success');
+    onClose();
+  };
+
+  const handleDeactivate = async () => {
+    if (!window.confirm('Are you sure you want to deactivate this product? This action cannot be undone. The product will be hidden from new operations but preserved in history.')) return;
+    setLoading(true);
+    await new Promise(res => setTimeout(res, 500));
+    setLoading(false);
+    showToast('Product deactivated.', 'warning');
+    onClose();
+  };
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="product-modal-title">
+        <div className="modal-header">
+          <h2 className="modal-title" id="product-modal-title">
+            {isEdit ? `Edit — ${product.name}` : 'New Product'}
+          </h2>
+          <button className="modal-close" onClick={onClose} aria-label="Close modal"><X size={16} /></button>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div className="modal-body">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)' }}>
+              <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                <label className="form-label" htmlFor="prod-name">Name <span className="required">*</span></label>
+                <input id="prod-name" className={`input${errors.name ? ' error' : ''}`} placeholder="e.g. Office Desk" value={form.name} onChange={set('name')} />
+                {errors.name && <span className="form-error">{errors.name}</span>}
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="prod-sku">SKU / Code <span className="required">*</span></label>
+                <input id="prod-sku" className={`input${errors.sku ? ' error' : ''}`} placeholder="e.g. DESK001"
+                  value={form.sku} onChange={set('sku')} readOnly={isEdit}
+                  style={isEdit ? { background: 'var(--color-bg-secondary)', cursor: 'not-allowed' } : {}} />
+                {errors.sku && <span className="form-error">{errors.sku}</span>}
+                {isEdit && <span className="form-hint">SKU cannot be changed after creation.</span>}
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="prod-category">Category <span className="required">*</span></label>
+                <input id="prod-category" className={`input${errors.category ? ' error' : ''}`} placeholder="e.g. Furniture"
+                  value={form.category} onChange={set('category')} list="category-list" />
+                <datalist id="category-list">
+                  <option value="Furniture" />
+                  <option value="Electronics" />
+                  <option value="Storage" />
+                  <option value="Office Supplies" />
+                </datalist>
+                {errors.category && <span className="form-error">{errors.category}</span>}
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="prod-uom">Unit of Measure</label>
+                <select id="prod-uom" className="input select" value={form.unitOfMeasure} onChange={set('unitOfMeasure')}>
+                  <option>Units</option>
+                  <option>Boxes</option>
+                  <option>Kg</option>
+                  <option>Litres</option>
+                  <option>Meters</option>
+                </select>
+              </div>
+
+              {!isEdit && (
+                <>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="prod-initial-stock">Initial Stock</label>
+                    <input id="prod-initial-stock" type="number" min="0" className="input" value={form.initialStock}
+                      onChange={e => setForm(prev => ({ ...prev, initialStock: parseInt(e.target.value) || 0 }))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="prod-warehouse">Warehouse</label>
+                    <select id="prod-warehouse" className="input select" value={form.warehouseId} onChange={set('warehouseId')}>
+                      {mockWarehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                    </select>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Reorder Rule */}
+            <div style={{ background: 'var(--color-bg-elevated)', borderRadius: 'var(--radius-md)', padding: 'var(--space-4)', border: '1px solid var(--color-border)', marginTop: 'var(--space-2)' }}>
+              <div style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, marginBottom: 'var(--space-3)', color: 'var(--color-text-primary)' }}>
+                Reorder Rule (optional)
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label" htmlFor="prod-threshold">Min Stock Threshold</label>
+                  <input id="prod-threshold" type="number" min="0" className="input" placeholder="e.g. 10"
+                    value={form.reorderThreshold} onChange={set('reorderThreshold')} />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label" htmlFor="prod-reorder-qty">Reorder Quantity</label>
+                  <input id="prod-reorder-qty" type="number" min="1" className="input" placeholder="e.g. 50"
+                    value={form.reorderQty} onChange={set('reorderQty')} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="modal-footer">
+            {isEdit && (
+              <button type="button" className="btn btn-danger btn-sm" onClick={handleDeactivate} id="deactivate-product-btn">
+                Deactivate
+              </button>
+            )}
+            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className={`btn btn-primary${loading ? ' btn-loading' : ''}`} id="save-product-btn" disabled={loading}>
+              {loading ? <Loader2 size={14} style={{ animation: 'spin 0.8s linear infinite' }} /> : null}
+              {loading ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Product'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
