@@ -4,15 +4,16 @@
   "description": "StockSense IMS API",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
-    "start": "node dist/src/server.js",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "db:up": "docker compose up -d",
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
-    "smoke": "tsx scripts/smoke.ts"
+    "test:watch": "vitest",
+    "db:deploy": "prisma migrate deploy"
   },
   "keywords": [],
   "author": "",
@@ -26,9 +27,11 @@
     "cors": "^2.8.6",
     "dotenv": "^18.0.4",
     "express": "^4.22.3",
+    "express-rate-limit": "^8.7.0",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
     "morgan": "^1.12.1",
+    "nodemailer": "^10.0.10",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -39,9 +42,15 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/morgan": "^1.9.10",
     "@types/node": "^20.19.43",
+    "@types/nodemailer": "^8.0.2",
+    "@types/smtp-server": "^3.5.13",
+    "@types/supertest": "^7.2.1",
     "prisma": "^6.19.3",
+    "smtp-server": "^3.19.13",
+    "supertest": "^7.3.0",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

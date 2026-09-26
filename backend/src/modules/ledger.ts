@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { MovementType, Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
-import { asyncHandler, parse } from '../lib/http.js';
+import { asyncHandler, pageQuery, paging, parse } from '../lib/http.js';
 
 // Read-only on purpose: the ledger is append-only and only written by stock-changing transactions.
 export const ledgerRouter = Router();
@@ -22,7 +22,7 @@ ledgerRouter.get(
         search: z.string().trim().optional(),
         dateFrom: date.optional(),
         dateTo: date.optional(),
-        limit: z.coerce.number().int().min(1).max(1000).default(200),
+        ...pageQuery,
       }),
       req.query,
     );
@@ -52,8 +52,9 @@ ledgerRouter.get(
       where,
       include: { product: true, actor: true },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: q.limit,
+      ...paging(q, 200),
     });
+    res.setHeader('X-Total-Count', String(await prisma.ledgerEntry.count({ where })));
     res.json(
       rows.map(e => ({
         id: e.id,

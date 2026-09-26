@@ -7,6 +7,8 @@ import { env } from '../lib/env.js';
 import { asyncHandler, parse } from '../lib/http.js';
 import { badRequest, conflict, unauthorized } from '../lib/errors.js';
 import { newOtp, newRefreshToken, sha256, signAccessToken } from '../lib/tokens.js';
+import { isMailConfigured, sendOtpEmail } from '../lib/mail.js';
+import { loginLimiter, otpLimiter, signupLimiter } from '../middleware/rateLimit.js';
 
 export const authRouter = Router();
 
@@ -47,6 +49,7 @@ const email = z.string().trim().toLowerCase().email();
 
 authRouter.post(
   '/signup',
+  signupLimiter,
   asyncHandler(async (req, res) => {
     const b = parse(
       z.object({
@@ -67,6 +70,7 @@ authRouter.post(
 
 authRouter.post(
   '/login',
+  loginLimiter,
   asyncHandler(async (req, res) => {
     const b = parse(z.object({ email, password: z.string().min(1) }), req.body);
     const user = await prisma.user.findUnique({ where: { email: b.email } });
@@ -107,10 +111,11 @@ authRouter.post(
 );
 
 // Step 1 of reset. Always answers 200 so emails can't be enumerated.
-// No mail provider is wired up: the OTP is printed to the server console, and
-// returned as `devOtp` outside production so the demo works without email.
+// The OTP is emailed when SMTP_HOST is configured. Without SMTP it is printed to the server
+// console and returned as `devOtp` (never in production) so the demo still works.
 authRouter.post(
   '/forgot-password',
+  otpLimiter,
   asyncHandler(async (req, res) => {
     const b = parse(z.object({ email }), req.body);
     const user = await prisma.user.findUnique({ where: { email: b.email } });
@@ -121,8 +126,13 @@ authRouter.post(
       await prisma.passwordReset.create({
         data: { userId: user.id, otpHash: sha256(otp), expiresAt: new Date(Date.now() + OTP_TTL_MS) },
       });
-      console.log(`[password-reset] OTP for ${user.email}: ${otp}`);
-      if (!env.isProd) devOtp = otp;
+      if (isMailConfigured()) {
+        // Not awaited: response time must not reveal whether the address is registered.
+        sendOtpEmail(user.email, otp, OTP_TTL_MS / 60000).catch(err => console.error('[password-reset] email failed:', err));
+      } else {
+        console.log(`[password-reset] SMTP not configured. OTP for ${user.email}: ${otp}`);
+        if (!env.isProd) devOtp = otp;
+      }
     }
     res.json({ message: 'If that email exists, an OTP has been sent.', ...(devOtp && { devOtp }) });
   }),
@@ -146,6 +156,7 @@ async function checkOtp(emailAddr: string, otp: string) {
 
 authRouter.post(
   '/verify-otp',
+  otpLimiter,
   asyncHandler(async (req, res) => {
     const b = parse(z.object({ email, otp: z.string().length(6) }), req.body);
     await checkOtp(b.email, b.otp);
@@ -155,6 +166,7 @@ authRouter.post(
 
 authRouter.post(
   '/reset-password',
+  otpLimiter,
   asyncHandler(async (req, res) => {
     const b = parse(z.object({ email, otp: z.string().length(6), newPassword: password }), req.body);
     const { user, reset } = await checkOtp(b.email, b.otp);

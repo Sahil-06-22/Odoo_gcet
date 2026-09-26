@@ -15,11 +15,13 @@ import { operationsRouter } from './modules/operations.js';
 import { adjustmentsRouter } from './modules/adjustments.js';
 import { ledgerRouter } from './modules/ledger.js';
 import { dashboardRouter } from './modules/dashboard.js';
+import { reorderRouter } from './modules/reorder.js';
 
 export function createApp() {
   const app = express();
+  if (env.trustProxy !== undefined) app.set('trust proxy', env.trustProxy);
   app.use(helmet());
-  app.use(cors({ origin: env.corsOrigins, credentials: true }));
+  app.use(cors({ origin: env.corsOrigins, credentials: true, exposedHeaders: ['X-Total-Count'] }));
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
   if (env.nodeEnv !== 'test') app.use(morgan('dev'));
@@ -45,6 +47,7 @@ export function createApp() {
   api.use('/adjustments', adjustmentsRouter);
   api.use('/ledger', ledgerRouter);
   api.use('/dashboard', dashboardRouter);
+  api.use('/reorder', reorderRouter);
   app.use('/api', api);
 
   app.use(notFoundHandler);

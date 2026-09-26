@@ -16,6 +16,15 @@ export async function locationQty(tx: Tx, productId: string, locationId: string)
   return r?.quantity ?? 0;
 }
 
+/** Atomically take `need` from a location if it has that much. The check is part of the UPDATE, so concurrent takers can't overdraw. */
+export async function takeStock(tx: Tx, productId: string, locationId: string, need: number): Promise<boolean> {
+  const r = await tx.stockLevel.updateMany({
+    where: { productId, locationId, quantity: { gte: need } },
+    data: { quantity: { decrement: need } },
+  });
+  return r.count > 0;
+}
+
 /**
  * Change on-hand stock at a location by `delta`. Never lets stock go negative;
  * the check is part of the UPDATE so concurrent validations can't overdraw.
@@ -31,11 +40,7 @@ export async function moveStock(tx: Tx, productId: string, locationId: string, d
     return;
   }
   const need = -delta;
-  const r = await tx.stockLevel.updateMany({
-    where: { productId, locationId, quantity: { gte: need } },
-    data: { quantity: { decrement: need } },
-  });
-  if (r.count === 0) {
+  if (!(await takeStock(tx, productId, locationId, need))) {
     const have = await locationQty(tx, productId, locationId);
     throw conflict(`Insufficient stock for ${what}: need ${need}, have ${have}`, { productId, locationId, need, have });
   }

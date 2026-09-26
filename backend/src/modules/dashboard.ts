@@ -41,7 +41,7 @@ dashboardRouter.get(
       type,
       status: { in: [...OPEN] },
       ...(q.warehouseId && {
-        OR: [{ sourceLocation: { warehouseId: q.warehouseId } }, { destLocation: { warehouseId: q.warehouseId } }],
+        OR: [{ warehouseId: q.warehouseId }, { sourceLocation: { warehouseId: q.warehouseId } }, { destLocation: { warehouseId: q.warehouseId } }],
       }),
       ...(q.category && { lines: { some: { product: { category: { name: q.category } } } } }),
     });
@@ -94,7 +94,7 @@ dashboardRouter.get(
     const groups = await prisma.operation.groupBy({
       by: ['type', 'status'],
       where: q.warehouseId
-        ? { OR: [{ sourceLocation: { warehouseId: q.warehouseId } }, { destLocation: { warehouseId: q.warehouseId } }] }
+        ? { OR: [{ warehouseId: q.warehouseId }, { sourceLocation: { warehouseId: q.warehouseId } }, { destLocation: { warehouseId: q.warehouseId } }] }
         : undefined,
       _count: { _all: true },
     });

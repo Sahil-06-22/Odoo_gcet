@@ -2,11 +2,11 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { DocumentStatus, OperationType, Prisma } from '@prisma/client';
 import { prisma, type Tx } from '../lib/prisma.js';
-import { asyncHandler, parse } from '../lib/http.js';
+import { asyncHandler, pageQuery, paging, parse } from '../lib/http.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { managerOnly } from '../middleware/auth.js';
 import { nextReference } from '../lib/refs.js';
-import { locationLabel, moveStock, writeLedger } from '../lib/stock.js';
+import { locationLabel, moveStock, takeStock, writeLedger } from '../lib/stock.js';
 
 /**
  * Receipts, delivery orders and internal transfers are the same state machine:
@@ -18,12 +18,14 @@ import { locationLabel, moveStock, writeLedger } from '../lib/stock.js';
 const include = {
   lines: { include: { product: true }, orderBy: { id: 'asc' } },
   responsible: true,
+  warehouse: true,
   sourceLocation: { include: { warehouse: true } },
   destLocation: { include: { warehouse: true } },
 } satisfies Prisma.OperationInclude;
 
 type OpRow = Prisma.OperationGetPayload<{ include: typeof include }>;
-type Availability = Map<string, number>; // `${locationId}:${productId}` -> qty
+// `${locationId}:${productId}` (delivery from one location) or `wh:${warehouseId}:${productId}` (whole warehouse) -> qty
+type Availability = Map<string, number>;
 const OPEN: DocumentStatus[] = ['DRAFT', 'WAITING', 'READY'];
 
 // ---------- input schemas ----------
@@ -87,17 +89,29 @@ async function assertProducts(tx: Tx, ids: string[]) {
 type LineIn = z.infer<typeof line>;
 const lineData = (l: LineIn) => ({ productId: l.productId, expectedQty: (l.expectedQty ?? l.quantity)!, doneQty: l.receivedQty ?? null });
 
+const availKey = (o: OpRow, productId: string) =>
+  o.sourceLocationId ? `${o.sourceLocationId}:${productId}` : `wh:${o.warehouseId}:${productId}`;
+
 async function availability(rows: OpRow[]): Promise<Availability> {
-  const open = rows.filter(r => r.sourceLocationId && OPEN.includes(r.status) && r.type !== 'RECEIPT');
+  const open = rows.filter(r => r.type !== 'RECEIPT' && OPEN.includes(r.status));
   const map: Availability = new Map();
   if (!open.length) return map;
+  const locIds = [...new Set(open.map(o => o.sourceLocationId).filter((x): x is string => !!x))];
+  const whIds = [...new Set(open.filter(o => !o.sourceLocationId && o.warehouseId).map(o => o.warehouseId!))];
   const levels = await prisma.stockLevel.findMany({
     where: {
-      locationId: { in: [...new Set(open.map(o => o.sourceLocationId!))] },
       productId: { in: [...new Set(open.flatMap(o => o.lines.map(l => l.productId)))] },
+      OR: [{ locationId: { in: locIds } }, { location: { warehouseId: { in: whIds } } }],
     },
+    include: { location: { select: { warehouseId: true } } },
   });
-  for (const l of levels) map.set(`${l.locationId}:${l.productId}`, l.quantity);
+  for (const l of levels) {
+    if (locIds.includes(l.locationId)) map.set(`${l.locationId}:${l.productId}`, l.quantity);
+    if (whIds.includes(l.location.warehouseId)) {
+      const k = `wh:${l.location.warehouseId}:${l.productId}`;
+      map.set(k, (map.get(k) ?? 0) + l.quantity);
+    }
+  }
   return map;
 }
 
@@ -106,7 +120,7 @@ function mapLines(o: OpRow, avail: Availability) {
   return o.lines.map(l => {
     const base = { id: l.id, productId: l.productId, productName: l.product.name, productSku: l.product.sku };
     if (o.type === 'RECEIPT') return { ...base, expectedQty: l.expectedQty, receivedQty: l.doneQty ?? l.expectedQty };
-    const isInsufficient = OPEN.includes(o.status) && (avail.get(`${o.sourceLocationId}:${l.productId}`) ?? 0) < l.expectedQty;
+    const isInsufficient = OPEN.includes(o.status) && (avail.get(availKey(o, l.productId)) ?? 0) < l.expectedQty;
     return { ...base, quantity: l.expectedQty, isInsufficient };
   });
 }
@@ -135,8 +149,8 @@ function mapOp(o: OpRow, avail: Availability) {
         ...common,
         deliveryAddress: o.address,
         contact: o.contact,
-        sourceWarehouseId: o.sourceLocation!.warehouseId,
-        sourceWarehouseName: locationLabel(o.sourceLocation!),
+        sourceWarehouseId: o.warehouseId ?? o.sourceLocation!.warehouseId,
+        sourceWarehouseName: o.sourceLocation ? locationLabel(o.sourceLocation) : o.warehouse!.name,
         sourceLocationId: o.sourceLocationId,
         operationType: 'Delivery Orders',
         responsible: o.responsible.name,
@@ -178,6 +192,7 @@ export function operationsRouter(type: OperationType) {
           search: z.string().trim().optional(),
           dateFrom: date.optional(),
           dateTo: date.optional(),
+          ...pageQuery,
         }),
         req.query,
       );
@@ -185,7 +200,11 @@ export function operationsRouter(type: OperationType) {
         type,
         ...(q.status && { status: q.status }),
         ...(q.warehouseId && {
-          OR: [{ sourceLocation: { warehouseId: q.warehouseId } }, { destLocation: { warehouseId: q.warehouseId } }],
+          OR: [
+            { warehouseId: q.warehouseId },
+            { sourceLocation: { warehouseId: q.warehouseId } },
+            { destLocation: { warehouseId: q.warehouseId } },
+          ],
         }),
         ...(q.search && {
           AND: [
@@ -200,7 +219,8 @@ export function operationsRouter(type: OperationType) {
         }),
         ...((q.dateFrom || q.dateTo) && { scheduledDate: { ...(q.dateFrom && { gte: q.dateFrom }), ...(q.dateTo && { lte: q.dateTo }) } }),
       };
-      const rows = await prisma.operation.findMany({ where, include, orderBy: { createdAt: 'desc' }, take: 500 });
+      const rows = await prisma.operation.findMany({ where, include, orderBy: { createdAt: 'desc' }, ...paging(q) });
+      if (q.limit) res.setHeader('X-Total-Count', String(await prisma.operation.count({ where })));
       const avail = await availability(rows);
       res.json(rows.map(o => mapOp(o, avail)));
     }),
@@ -216,6 +236,7 @@ export function operationsRouter(type: OperationType) {
       const created = await prisma.$transaction(async tx => {
         let sourceLocationId: string | null = null;
         let destLocationId: string | null = null;
+        let warehouseId: string | null = null;
         let refCode: string;
         let contact = '';
         let address = '';
@@ -226,9 +247,19 @@ export function operationsRouter(type: OperationType) {
           refCode = dest.warehouse.shortCode;
           contact = b.supplier;
         } else if (type === 'DELIVERY') {
-          const src = await resolveLocation(tx, b.sourceWarehouseId, b.sourceLocationId);
-          sourceLocationId = src.id;
-          refCode = src.warehouse.shortCode;
+          // A specific location pins the pick to it; a bare warehouse means "pull from wherever it's stocked".
+          if (b.sourceLocationId) {
+            const src = await resolveLocation(tx, b.sourceWarehouseId, b.sourceLocationId);
+            sourceLocationId = src.id;
+            warehouseId = src.warehouseId;
+            refCode = src.warehouse.shortCode;
+          } else {
+            if (!b.sourceWarehouseId) throw badRequest('sourceWarehouseId or sourceLocationId is required');
+            const wh = await tx.warehouse.findUnique({ where: { id: b.sourceWarehouseId } });
+            if (!wh) throw badRequest('Warehouse not found');
+            warehouseId = wh.id;
+            refCode = wh.shortCode;
+          }
           contact = b.contact;
           address = b.deliveryAddress;
         } else {
@@ -250,6 +281,7 @@ export function operationsRouter(type: OperationType) {
             address,
             sourceLocationId,
             destLocationId,
+            warehouseId,
             responsibleId: req.auth!.userId,
             ...(b.scheduledDate && { scheduledDate: b.scheduledDate }),
             lines: { create: b.lines.map(lineData) },
@@ -375,9 +407,42 @@ export function operationsRouter(type: OperationType) {
           if (type === 'RECEIPT') {
             await moveStock(tx, l.productId, op.destLocationId!, qty);
             await writeLedger(tx, { ...ledger, movementType: 'RECEIPT', fromLabel: 'vendor', toLabel: dst!, quantity: qty });
-          } else if (type === 'DELIVERY') {
-            await moveStock(tx, l.productId, op.sourceLocationId!, -qty, `${l.product.name} (${l.product.sku})`);
+          } else if (type === 'DELIVERY' && op.sourceLocationId) {
+            await moveStock(tx, l.productId, op.sourceLocationId, -qty, `${l.product.name} (${l.product.sku})`);
             await writeLedger(tx, { ...ledger, movementType: 'DELIVERY', fromLabel: src!, toLabel: 'customer', quantity: -qty });
+          } else if (type === 'DELIVERY') {
+            // Warehouse-wide pick: plan to drain the fullest locations first, one ledger row per location used.
+            // Plans are re-made from fresh stock if a concurrent order takes stock from under us, and the
+            // updates run in a fixed location order so two competing picks can't deadlock.
+            const what = `${l.product.name} (${l.product.sku})`;
+            let left = qty;
+            for (let attempt = 0; attempt < 5 && left > 0; attempt++) {
+              const pools = await tx.stockLevel.findMany({
+                where: { productId: l.productId, quantity: { gt: 0 }, location: { warehouseId: op.warehouseId! } },
+                include: { location: { include: { warehouse: true } } },
+                orderBy: [{ quantity: 'desc' }, { locationId: 'asc' }],
+              });
+              const plan: { pool: (typeof pools)[number]; take: number }[] = [];
+              let need = left;
+              for (const pool of pools) {
+                if (need <= 0) break;
+                const take = Math.min(need, pool.quantity);
+                plan.push({ pool, take });
+                need -= take;
+              }
+              if (need > 0) {
+                throw conflict(`Insufficient stock for ${what}: need ${qty}, have ${qty - left + (left - need)}`, {
+                  productId: l.productId, need: qty, have: qty - left + (left - need),
+                });
+              }
+              plan.sort((a, b) => a.pool.locationId.localeCompare(b.pool.locationId));
+              for (const { pool, take } of plan) {
+                if (!(await takeStock(tx, l.productId, pool.locationId, take))) break; // stock moved; re-plan
+                await writeLedger(tx, { ...ledger, movementType: 'DELIVERY', fromLabel: locationLabel(pool.location), toLabel: 'customer', quantity: -take });
+                left -= take;
+              }
+            }
+            if (left > 0) throw conflict(`Insufficient stock for ${what}: stock changed while picking, please retry`, { productId: l.productId });
           } else {
             await moveStock(tx, l.productId, op.sourceLocationId!, -qty, `${l.product.name} (${l.product.sku})`);
             await moveStock(tx, l.productId, op.destLocationId!, qty);

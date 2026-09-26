@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { Category, Product, StockLevel } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
-import { asyncHandler, parse } from '../lib/http.js';
+import { asyncHandler, pageQuery, paging, parse } from '../lib/http.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { managerOnly } from '../middleware/auth.js';
 import { locationLabel, moveStock, stockStatus, writeLedger } from '../lib/stock.js';
@@ -26,6 +26,7 @@ export function mapProduct(p: ProductRow) {
     isActive: p.isActive,
     reorderThreshold: p.reorderThreshold ?? undefined,
     reorderQty: p.reorderQty ?? undefined,
+    unitCost: p.unitCost == null ? undefined : Number(p.unitCost),
     createdAt: p.createdAt.toISOString(),
   };
 }
@@ -66,6 +67,7 @@ productsRouter.get(
         category: z.string().trim().optional(), // category name
         stockStatus: z.enum(['IN_STOCK', 'LOW_STOCK', 'OUT_OF_STOCK']).optional(),
         includeInactive: z.enum(['true', 'false']).optional(),
+        ...pageQuery,
       }),
       req.query,
     );
@@ -83,8 +85,11 @@ productsRouter.get(
       include: productInclude,
       orderBy: { name: 'asc' },
     });
-    const rows = products.map(mapProduct);
-    res.json(q.stockStatus ? rows.filter(r => r.stockStatus === q.stockStatus) : rows);
+    // stockStatus is derived from stock levels, so filter and page in memory.
+    const rows = products.map(mapProduct).filter(r => !q.stockStatus || r.stockStatus === q.stockStatus);
+    const { take, skip } = paging(q, rows.length || 1);
+    if (q.limit) res.setHeader('X-Total-Count', String(rows.length));
+    res.json(q.limit ? rows.slice(skip, skip + take) : rows);
   }),
 );
 
@@ -95,6 +100,7 @@ const productBody = z.object({
   unitOfMeasure: z.string().trim().min(1).max(20).default('Units'),
   reorderThreshold: z.number().int().min(0).nullable().optional(),
   reorderQty: z.number().int().min(0).nullable().optional(),
+  unitCost: z.number().min(0).max(9_999_999_999).nullable().optional(),
   isActive: z.boolean().optional(),
 });
 

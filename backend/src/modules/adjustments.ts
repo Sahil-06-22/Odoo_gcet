@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-import { asyncHandler, parse } from '../lib/http.js';
+import { asyncHandler, pageQuery, paging, parse } from '../lib/http.js';
 import { notFound } from '../lib/errors.js';
 import { nextReference } from '../lib/refs.js';
 import { locationLabel, locationQty, moveStock, writeLedger } from '../lib/stock.js';
@@ -31,8 +31,10 @@ const mapAdjustment = (a: Row) => ({
 adjustmentsRouter.get(
   '/',
   asyncHandler(async (req, res) => {
-    const q = parse(z.object({ productId: z.string().optional(), locationId: z.string().optional() }), req.query);
-    const rows = await prisma.adjustment.findMany({ where: q, include, orderBy: { createdAt: 'desc' }, take: 500 });
+    const q = parse(z.object({ productId: z.string().optional(), locationId: z.string().optional(), ...pageQuery }), req.query);
+    const where = { ...(q.productId && { productId: q.productId }), ...(q.locationId && { locationId: q.locationId }) };
+    const rows = await prisma.adjustment.findMany({ where, include, orderBy: { createdAt: 'desc' }, ...paging(q) });
+    if (q.limit) res.setHeader('X-Total-Count', String(await prisma.adjustment.count({ where })));
     res.json(rows.map(mapAdjustment));
   }),
 );

@@ -51,17 +51,17 @@ async function main() {
   const stock1 = main.locations.find(l => l.shortCode === 'Stock1')!;
 
   const products = [
-    { sku: 'DESK001', name: 'Desk', category: 'Furniture', qty: 50, reorderThreshold: 10 },
-    { sku: 'CHAIR001', name: 'Chair', category: 'Furniture', qty: 35, reorderThreshold: 15 },
-    { sku: 'TABLE001', name: 'Table', category: 'Furniture', qty: 8, reorderThreshold: 10 },
-    { sku: 'SHELF001', name: 'Shelf Unit', category: 'Storage', qty: 0, reorderThreshold: 5 },
-    { sku: 'LAMP001', name: 'Desk Lamp', category: 'Electronics', qty: 120, reorderThreshold: null },
-    { sku: 'CABLE001', name: 'HDMI Cable', category: 'Electronics', qty: 3, reorderThreshold: 20 },
+    { sku: 'DESK001', cost: 4500, name: 'Desk', category: 'Furniture', qty: 50, reorderThreshold: 10 },
+    { sku: 'CHAIR001', cost: 1800, name: 'Chair', category: 'Furniture', qty: 35, reorderThreshold: 15 },
+    { sku: 'TABLE001', cost: 3200, name: 'Table', category: 'Furniture', qty: 8, reorderThreshold: 10 },
+    { sku: 'SHELF001', cost: 2400, name: 'Shelf Unit', category: 'Storage', qty: 0, reorderThreshold: 5 },
+    { sku: 'LAMP001', cost: 650, name: 'Desk Lamp', category: 'Electronics', qty: 120, reorderThreshold: null },
+    { sku: 'CABLE001', cost: 199, name: 'HDMI Cable', category: 'Electronics', qty: 3, reorderThreshold: 20 },
   ];
   for (const p of products) {
     const cat = await prisma.category.upsert({ where: { name: p.category }, create: { name: p.category }, update: {} });
     const created = await prisma.product.create({
-      data: { sku: p.sku, name: p.name, categoryId: cat.id, unitOfMeasure: 'Units', reorderThreshold: p.reorderThreshold },
+      data: { sku: p.sku, name: p.name, categoryId: cat.id, unitOfMeasure: 'Units', reorderThreshold: p.reorderThreshold, unitCost: p.cost },
     });
     if (p.qty > 0) {
       await prisma.stockLevel.create({ data: { productId: created.id, locationId: stock1.id, quantity: p.qty } });
