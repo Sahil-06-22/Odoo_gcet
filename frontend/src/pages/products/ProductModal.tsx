@@ -28,6 +28,7 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
     warehouseId: '',
     reorderThreshold: product?.reorderThreshold || '',
     reorderQty: product?.reorderQty || '',
+    unitCost: product?.unitCost ?? '',
   });
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -57,6 +58,7 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
           unitOfMeasure: form.unitOfMeasure,
           reorderThreshold: toNum(form.reorderThreshold),
           reorderQty: toNum(form.reorderQty),
+          unitCost: toNum(form.unitCost),
         });
       } else {
         const wh = warehouses.find(w => w.id === (form.warehouseId || warehouses[0]?.id));
@@ -67,6 +69,7 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
           unitOfMeasure: form.unitOfMeasure,
           reorderThreshold: toNum(form.reorderThreshold),
           reorderQty: toNum(form.reorderQty),
+          unitCost: toNum(form.unitCost),
           initialStock: form.initialStock > 0 ? form.initialStock : undefined,
           locationId: wh?.locations[0]?.id,
         });
@@ -145,6 +148,12 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
                   <option>Litres</option>
                   <option>Meters</option>
                 </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="prod-cost">Unit Cost</label>
+                <input id="prod-cost" type="number" min="0" step="0.01" className="input" placeholder="e.g. 250.00"
+                  value={form.unitCost} onChange={set('unitCost')} />
               </div>
 
               {!isEdit && (

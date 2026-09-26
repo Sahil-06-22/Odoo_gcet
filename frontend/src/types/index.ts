@@ -24,6 +24,7 @@ export interface Product {
   isActive: boolean;
   reorderThreshold?: number;
   reorderQty?: number;
+  unitCost?: number;
   createdAt: string;
 }
 

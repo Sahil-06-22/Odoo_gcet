@@ -7,6 +7,7 @@ import { useApi } from '../../api/useApi';
 import { AsyncState } from '../../components/AsyncState';
 import type { Product } from '../../types';
 import { ProductModal } from './ProductModal';
+import { fmtMoney } from '../../utils/format';
 
 function StockBadge({ status }: { status: Product['stockStatus'] }) {
   if (status === 'OUT_OF_STOCK') return <span className="badge badge-out-of-stock">Out of Stock</span>;
@@ -130,7 +131,7 @@ export default function ProductsPage() {
                     <td className="table-cell-muted">{p.category}</td>
                     <td className="table-cell-muted">{p.unitOfMeasure}</td>
                     <td style={{ fontWeight: 600 }}>{p.totalStock}</td>
-                    <td className="table-cell-muted">—</td>
+                    <td className="table-cell-muted">{fmtMoney(p.unitCost)}</td>
                     <td>{p.totalStock}</td>
                     <td><StockBadge status={p.stockStatus} /></td>
                     <td>

@@ -71,6 +71,7 @@ export interface ProductInput {
   unitOfMeasure?: string;
   reorderThreshold?: number | null;
   reorderQty?: number | null;
+  unitCost?: number | null;
   isActive?: boolean;
   initialStock?: number;
   locationId?: string;
@@ -127,6 +128,15 @@ export const dashboard = {
     ),
   operations: (f?: { warehouseId?: string }) =>
     get<{ byTypeAndStatus: { type: string; status: DocumentStatus; count: number }[]; adjustments: number }>('/dashboard/operations', { ...f }),
+};
+
+export const reorder = {
+  /** Draft a receipt for every product at/below its reorder threshold (manager only). */
+  draftReceipt: (b: { warehouseId: string; supplier?: string; productIds?: string[] }) =>
+    post<{
+      receipt: { id: string; reference: string; status: DocumentStatus; lines: { productId: string; sku: string; name: string; quantity: number }[] } | null;
+      skipped: { productId: string; sku: string; reason: string }[];
+    }>('/reorder/draft-receipt', b),
 };
 
 export const auth = {

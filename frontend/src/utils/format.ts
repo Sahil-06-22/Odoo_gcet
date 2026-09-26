@@ -8,4 +8,7 @@ export const fmtDate = (iso?: string) =>
 export const fmtDateTime = (iso?: string) =>
   iso ? new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 
+/** Unit cost for tables; "—" when the product has none. */
+export const fmtMoney = (n?: number) => (n == null ? '—' : n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+
 export const errMsg = (e: unknown, fallback = 'Something went wrong') => (e instanceof Error ? e.message : fallback);

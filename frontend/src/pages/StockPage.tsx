@@ -4,6 +4,7 @@ import { Search, Boxes } from 'lucide-react';
 import { products as productsApi } from '../api';
 import { useApi } from '../api/useApi';
 import { AsyncState } from '../components/AsyncState';
+import { fmtMoney } from '../utils/format';
 import type { Product } from '../types';
 
 export default function StockPage() {
@@ -74,7 +75,7 @@ export default function StockPage() {
                       </div>
                       <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>{p.category}</div>
                     </td>
-                    <td className="table-cell-muted">—</td>
+                    <td className="table-cell-muted">{fmtMoney(p.unitCost)}</td>
                     <td style={{ fontWeight: 700, fontSize: 'var(--font-size-md)' }}>{p.totalStock}</td>
                     <td>{p.totalStock}</td>
                     <td>
