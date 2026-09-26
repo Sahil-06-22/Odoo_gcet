@@ -39,7 +39,11 @@ async function main() {
   const cookie = m.headers.get('set-cookie')?.split(';')[0] ?? '';
   const rf = await call('POST', '/auth/refresh', undefined, undefined, { Cookie: cookie });
   check('refresh rotates 200', rf.status === 200 && !!rf.body.accessToken, rf.body);
-  check('old refresh token rejected', (await call('POST', '/auth/refresh', undefined, undefined, { Cookie: cookie })).status === 401);
+  // Reuse window: the rotated-out token still works briefly so reloads/second tabs don't log the user out.
+  check('just-rotated token still works within the reuse window', (await call('POST', '/auth/refresh', undefined, undefined, { Cookie: cookie })).status === 200);
+  const rfCookie = rf.headers.get('set-cookie')?.split(';')[0] ?? '';
+  await call('POST', '/auth/logout', undefined, undefined, { Cookie: rfCookie });
+  check('token is dead after logout', (await call('POST', '/auth/refresh', undefined, undefined, { Cookie: rfCookie })).status === 401);
 
   console.log('password reset (OTP)');
   const fp = await call('POST', '/auth/forgot-password', { email: sEmail });

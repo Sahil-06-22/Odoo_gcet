@@ -13,6 +13,7 @@ export const authRouter = Router();
 const REFRESH_COOKIE = 'ss_refresh';
 const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_MAX_ATTEMPTS = 5;
+const REFRESH_REUSE_WINDOW_MS = 30 * 1000;
 
 export const publicUser = (u: User) => ({
   id: u.id,
@@ -75,17 +76,22 @@ authRouter.post(
   }),
 );
 
-// Rotates the refresh token: the presented one is consumed, a new one is set.
+// Rotates the refresh token. The presented token isn't killed instantly but shortened to a
+// small reuse window: a page reload or second tab that fires before the browser has stored the
+// new cookie would otherwise present a dead token and get logged out.
 authRouter.post(
   '/refresh',
   asyncHandler(async (req, res) => {
     const token = req.cookies?.[REFRESH_COOKIE] as string | undefined;
     if (!token) throw unauthorized('No refresh token');
+    const now = new Date();
     const row = await prisma.refreshToken.findUnique({ where: { tokenHash: sha256(token) }, include: { user: true } });
-    if (!row || row.expiresAt < new Date()) throw unauthorized('Refresh token invalid or expired');
-    // deleteMany so a replayed token (race) only succeeds once.
-    const consumed = await prisma.refreshToken.deleteMany({ where: { id: row.id } });
-    if (consumed.count === 0) throw unauthorized('Refresh token already used');
+    if (!row || row.expiresAt < now) throw unauthorized('Refresh token invalid or expired');
+    const graceEnd = new Date(now.getTime() + REFRESH_REUSE_WINDOW_MS);
+    await prisma.$transaction([
+      prisma.refreshToken.updateMany({ where: { id: row.id, expiresAt: { gt: graceEnd } }, data: { expiresAt: graceEnd } }),
+      prisma.refreshToken.deleteMany({ where: { userId: row.userId, expiresAt: { lt: now } } }), // tidy up
+    ]);
     res.json(await issueSession(res, row.user));
   }),
 );

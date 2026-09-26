@@ -37,6 +37,7 @@ Seeded logins (password `password123`): `priya@stocksense.io` (Inventory Manager
 | `POST /auth/reset-password` `{email,otp,newPassword}` | OTP: 6 digits, 10 min, 5 tries, single-use |
 
 Access token lives 15 min — keep it in memory and call `/auth/refresh` on 401.
+Refresh tokens rotate on every use; the previous one stays valid for 30 s so a page reload or second tab that races the cookie update doesn't log the user out.
 
 ## Resources
 
