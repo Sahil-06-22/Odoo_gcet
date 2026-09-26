@@ -2,9 +2,13 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { CheckCircle, Printer, X, Plus, AlertCircle, Loader2, ChevronLeft, Trash2 } from 'lucide-react';
-import { mockDeliveries, mockProducts, mockWarehouses } from '../../data/mockData';
-import type { DocumentStatus, LineItem } from '../../types';
+import { deliveries as deliveriesApi, products as productsApi, warehouses as warehousesApi } from '../../api';
+import { useApi } from '../../api/useApi';
+import { AsyncState } from '../../components/AsyncState';
+import type { DeliveryOrder, DocumentStatus, LineItem, Product, Warehouse } from '../../types';
 import { useToast } from '../../context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
+import { errMsg, toDateInput } from '../../utils/format';
 
 function StatusBadge({ status }: { status: DocumentStatus }) {
   const cls = { DRAFT: 'badge-draft', READY: 'badge-ready', WAITING: 'badge-waiting', DONE: 'badge-done', CANCELLED: 'badge-cancelled' }[status];
@@ -15,25 +19,60 @@ const STEPS: DocumentStatus[] = ['DRAFT', 'WAITING', 'READY', 'DONE'];
 
 export default function DeliveryDetailPage() {
   const { id } = useParams();
+  const isNew = !id || id === 'new';
+
+  const { data, loading, error, reload } = useApi(async () => {
+    const [products, warehouses, existing] = await Promise.all([
+      productsApi.list(),
+      warehousesApi.list(),
+      isNew ? Promise.resolve(null) : deliveriesApi.get(id!),
+    ]);
+    return { products, warehouses, existing };
+  }, [id]);
+
+  if (!data) return <AsyncState loading={loading} error={error} onRetry={reload} />;
+  return <DeliveryForm key={data.existing?.id ?? 'new'} {...data} />;
+}
+
+interface FormProps {
+  existing: DeliveryOrder | null;
+  products: Product[];
+  warehouses: Warehouse[];
+}
+
+function DeliveryForm({ existing, products, warehouses }: FormProps) {
   const navigate = useNavigate();
   const { showToast } = useToast();
-  const isNew = id === 'new';
+  const { user } = useAuth();
 
-  const existing = isNew ? null : mockDeliveries.find(d => d.id === id);
-
-  const [status, setStatus] = useState<DocumentStatus>(existing?.status || 'DRAFT');
+  const [doc, setDoc] = useState<DeliveryOrder | null>(existing);
   const [deliveryAddress, setDeliveryAddress] = useState(existing?.deliveryAddress || '');
   const [contact, setContact] = useState(existing?.contact || '');
-  const [sourceWarehouse, setSourceWarehouse] = useState(existing?.sourceWarehouseId || mockWarehouses[0]?.id || '');
-  const [operationType, setOperationType] = useState(existing?.operationType || 'Delivery Orders');
-  const [scheduledDate, setScheduledDate] = useState(existing?.scheduledDate || '');
-  const [responsible] = useState(existing?.responsible || 'Priya Sharma');
+  const [sourceWarehouse, setSourceWarehouse] = useState(existing?.sourceWarehouseId || warehouses[0]?.id || '');
+  const [scheduledDate, setScheduledDate] = useState(toDateInput(existing?.scheduledDate) || new Date().toISOString().slice(0, 10));
   const [lines, setLines] = useState<LineItem[]>(existing?.lines || []);
-  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState<'' | 'save' | 'validate' | 'pick' | 'cancel'>('');
   const [error, setError] = useState('');
 
+  const status: DocumentStatus = doc?.status ?? 'DRAFT';
+  const operationType = doc?.operationType || 'Delivery Orders';
+  const responsible = doc?.responsible || user?.name || '';
   const isDone = status === 'DONE' || status === 'CANCELLED';
-  const ref = existing?.reference || '(Auto-assigned)';
+  const ref = doc?.reference || '(Auto-assigned)';
+
+  const applyDoc = (d: DeliveryOrder) => {
+    setDoc(d);
+    setDeliveryAddress(d.deliveryAddress);
+    setContact(d.contact);
+    setScheduledDate(toDateInput(d.scheduledDate));
+    setLines(d.lines);
+  };
+
+  // Quick client-side hint (total stock across warehouses); saved documents get the server's exact per-location answer.
+  const flag = (l: LineItem): LineItem => {
+    const p = products.find(p => p.id === l.productId);
+    return { ...l, isInsufficient: !!p && p.totalStock < (l.quantity || 1) };
+  };
 
   const addLine = () => setLines(prev => [...prev, { id: `new-${Date.now()}`, productId: '', productName: '', productSku: '', quantity: 1, expectedQty: 1 }]);
   const removeLine = (lineId: string) => setLines(prev => prev.filter(l => l.id !== lineId));
@@ -41,12 +80,65 @@ export default function DeliveryDetailPage() {
     setLines(prev => prev.map(l => {
       if (l.id !== lineId) return l;
       if (field === 'productId') {
-        const p = mockProducts.find(p => p.id === value);
-        const insufficient = p && p.totalStock < (l.quantity || 1);
-        return { ...l, productId: String(value), productName: p?.name || '', productSku: p?.sku || '', isInsufficient: insufficient };
+        const p = products.find(p => p.id === value);
+        return flag({ ...l, productId: String(value), productName: p?.name || '', productSku: p?.sku || '' });
       }
-      return { ...l, [field]: value };
+      return flag({ ...l, [field]: value });
     }));
+  };
+
+  const problem = (needLines: boolean) => {
+    if (!contact.trim()) return 'Contact / customer is required.';
+    if (!sourceWarehouse) return 'Choose a source warehouse.';
+    if (needLines && lines.length === 0) return 'Add at least one product line.';
+    if (lines.some(l => !l.productId)) return 'Select a product on every line.';
+    if (lines.some(l => !(l.quantity && l.quantity > 0))) return 'Quantity must be at least 1 on every line.';
+    return '';
+  };
+
+  const save = async (): Promise<DeliveryOrder> => {
+    const payloadLines = lines.map(l => ({ productId: l.productId, quantity: l.quantity ?? 1 }));
+    if (doc) {
+      return deliveriesApi.update(doc.id, { contact: contact.trim(), deliveryAddress: deliveryAddress.trim(), scheduledDate: scheduledDate || undefined, lines: payloadLines });
+    }
+    return deliveriesApi.create({
+      contact: contact.trim(),
+      deliveryAddress: deliveryAddress.trim(),
+      sourceWarehouseId: sourceWarehouse,
+      scheduledDate: scheduledDate || undefined,
+      lines: payloadLines,
+    });
+  };
+
+  const run = async (kind: 'save' | 'pick' | 'validate', step?: (id: string) => Promise<DeliveryOrder>) => {
+    const msg = problem(kind !== 'save');
+    if (msg) return setError(msg);
+    setError('');
+    setBusy(kind);
+    let saved: DeliveryOrder | null = null;
+    try {
+      saved = await save();
+      const result = step ? await step(saved.id) : saved;
+      if (!doc) navigate(`/deliveries/${result.id}`, { replace: true });
+      else applyDoc(result);
+      return result;
+    } catch (e) {
+      if (saved && !doc) navigate(`/deliveries/${saved.id}`, { replace: true });
+      else if (saved) applyDoc(saved);
+      setError(errMsg(e));
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const handleSave = async () => {
+    if (await run('save')) showToast('Delivery saved.', 'success');
+  };
+
+  // "Pick" = confirm: reserves the order. Goes to WAITING if stock isn't there yet.
+  const handlePick = async () => {
+    const r = await run('pick', deliveriesApi.confirm);
+    if (r) showToast(r.status === 'WAITING' ? 'Waiting for stock — some products are short.' : 'Delivery is ready.', r.status === 'WAITING' ? 'warning' : 'success');
   };
 
   const handleValidate = async () => {
@@ -55,17 +147,23 @@ export default function DeliveryDetailPage() {
       return setError(`Insufficient stock for: ${insufficientLines.map(l => l.productName).join(', ')}`);
     }
     if (!window.confirm('Validate this delivery? Stock will be decremented immediately.')) return;
-    setLoading(true);
-    await new Promise(res => setTimeout(res, 1000));
-    setStatus('DONE');
-    setLoading(false);
-    showToast('Delivery validated! Stock decremented.', 'success');
+    if (await run('validate', id => deliveriesApi.validate(id))) showToast('Delivery validated! Stock decremented.', 'success');
   };
 
-  const stepForward = () => {
-    const idx = STEPS.indexOf(status);
-    if (idx < STEPS.length - 1) setStatus(STEPS[idx + 1]);
+  const handleCancel = async () => {
+    if (!doc) return navigate('/deliveries');
+    setBusy('cancel');
+    try {
+      applyDoc(await deliveriesApi.cancel(doc.id));
+      showToast('Delivery cancelled.', 'warning');
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setBusy('');
+    }
   };
+
+  const loading = busy !== '';
 
   return (
     <div>
@@ -86,19 +184,21 @@ export default function DeliveryDetailPage() {
           <h1 className="page-title" style={{ flex: 1 }}>Delivery</h1>
           {!isDone && (
             <>
-              <button className={`btn btn-primary${loading ? ' btn-loading' : ''}`} onClick={handleValidate} disabled={loading} id="validate-delivery-btn">
-                {loading ? <Loader2 size={14} style={{ animation: 'spin 0.8s linear infinite' }} /> : <CheckCircle size={14} />}
+              <button className={`btn btn-primary${busy === 'validate' ? ' btn-loading' : ''}`} onClick={handleValidate} disabled={loading} id="validate-delivery-btn">
+                {busy === 'validate' ? <Loader2 size={14} style={{ animation: 'spin 0.8s linear infinite' }} /> : <CheckCircle size={14} />}
                 Validate
               </button>
-              {status === 'DRAFT' && <button className="btn btn-secondary" onClick={stepForward} id="pick-btn">Pick</button>}
-              {status === 'WAITING' && <button className="btn btn-secondary" onClick={stepForward} id="pack-btn">Pack</button>}
-              <button className="btn btn-secondary"><Printer size={14} /> Print</button>
-              <button className="btn btn-danger" onClick={() => { setStatus('CANCELLED'); showToast('Delivery cancelled.', 'warning'); }} id="cancel-delivery-btn">
+              <button className="btn btn-secondary" onClick={handleSave} disabled={loading} id="save-delivery-btn">
+                {busy === 'save' ? 'Saving…' : 'Save'}
+              </button>
+              {status === 'DRAFT' && <button className="btn btn-secondary" onClick={handlePick} disabled={loading} id="pick-btn">Pick</button>}
+              <button className="btn btn-secondary" onClick={() => window.print()}><Printer size={14} /> Print</button>
+              <button className="btn btn-danger" onClick={handleCancel} disabled={loading} id="cancel-delivery-btn">
                 <X size={14} /> Cancel
               </button>
             </>
           )}
-          {isDone && <button className="btn btn-secondary"><Printer size={14} /> Print</button>}
+          {isDone && <button className="btn btn-secondary" onClick={() => window.print()}><Printer size={14} /> Print</button>}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-4)', flexWrap: 'wrap', gap: 'var(--space-3)' }}>
@@ -130,18 +230,13 @@ export default function DeliveryDetailPage() {
           </div>
           <div>
             <div className="detail-field-label">Operation Type</div>
-            {isDone ? <div className="detail-field-value">{operationType}</div> : (
-              <select className="input select" value={operationType} onChange={e => setOperationType(e.target.value)} id="delivery-op-type">
-                <option>Delivery Orders</option>
-                <option>Returns</option>
-              </select>
-            )}
+            <div className="detail-field-value">{operationType}</div>
           </div>
           <div>
             <div className="detail-field-label">Source Warehouse</div>
-            {isDone ? <div className="detail-field-value">{mockWarehouses.find(w => w.id === sourceWarehouse)?.name}</div> : (
-              <select className="input select" value={sourceWarehouse} onChange={e => setSourceWarehouse(e.target.value)} id="delivery-warehouse">
-                {mockWarehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            {isDone ? <div className="detail-field-value">{warehouses.find(w => w.id === sourceWarehouse)?.name}</div> : (
+              <select className="input select" value={sourceWarehouse} onChange={e => setSourceWarehouse(e.target.value)} id="delivery-warehouse" disabled={!!doc}>
+                {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
             )}
           </div>
@@ -183,7 +278,7 @@ export default function DeliveryDetailPage() {
                         onChange={e => updateLine(line.id, 'productId', e.target.value)}
                         style={{ minWidth: 200, background: line.isInsufficient ? 'transparent' : undefined }}>
                         <option value="">— Select product —</option>
-                        {mockProducts.map(p => <option key={p.id} value={p.id}>[{p.sku}] {p.name} (stock: {p.totalStock})</option>)}
+                        {products.map(p => <option key={p.id} value={p.id}>[{p.sku}] {p.name} (stock: {p.totalStock})</option>)}
                       </select>
                     )}
                     {line.isInsufficient && <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-error)', marginTop: 2 }}>Insufficient stock</div>}
@@ -197,7 +292,7 @@ export default function DeliveryDetailPage() {
                   </td>
                   {!isDone && (
                     <td style={{ padding: '8px 12px' }}>
-                      <button className="btn btn-ghost btn-sm" onClick={() => removeLine(line.id)}><Trash2 size={14} style={{ color: 'var(--color-error)' }} /></button>
+                      <button className="btn btn-ghost btn-sm" onClick={() => removeLine(line.id)} aria-label="Remove line"><Trash2 size={14} style={{ color: 'var(--color-error)' }} /></button>
                     </td>
                   )}
                 </tr>

@@ -3,16 +3,21 @@ import { useState } from 'react';
 import { X, Loader2 } from 'lucide-react';
 import type { Product } from '../../types';
 import { useToast } from '../../context/ToastContext';
-import { mockWarehouses } from '../../data/mockData';
+import { products as productsApi, warehouses as warehousesApi, ApiError } from '../../api';
+import { useApi } from '../../api/useApi';
 
 interface Props {
   product: Product | null;
   onClose: () => void;
+  /** Called after a successful create / update / deactivate so the list can refetch. */
+  onSaved?: () => void;
 }
 
-export function ProductModal({ product, onClose }: Props) {
+export function ProductModal({ product, onClose, onSaved }: Props) {
   const { showToast } = useToast();
   const isEdit = !!product;
+  const { data: warehouses = [] } = useApi(() => warehousesApi.list());
+  const { data: categoryList = [] } = useApi(() => productsApi.categories());
 
   const [form, setForm] = useState({
     name: product?.name || '',
@@ -20,7 +25,7 @@ export function ProductModal({ product, onClose }: Props) {
     category: product?.category || '',
     unitOfMeasure: product?.unitOfMeasure || 'Units',
     initialStock: 0,
-    warehouseId: mockWarehouses[0]?.id || '',
+    warehouseId: '',
     reorderThreshold: product?.reorderThreshold || '',
     reorderQty: product?.reorderQty || '',
   });
@@ -43,19 +48,54 @@ export function ProductModal({ product, onClose }: Props) {
     const errs = validate();
     if (Object.keys(errs).length) { setErrors(errs); return; }
     setLoading(true);
-    await new Promise(res => setTimeout(res, 700));
-    setLoading(false);
-    showToast(isEdit ? 'Product updated successfully!' : 'Product created successfully!', 'success');
-    onClose();
+    const toNum = (v: string | number) => (v === '' ? null : Number(v));
+    try {
+      if (product) {
+        await productsApi.update(product.id, {
+          name: form.name.trim(),
+          category: form.category.trim(),
+          unitOfMeasure: form.unitOfMeasure,
+          reorderThreshold: toNum(form.reorderThreshold),
+          reorderQty: toNum(form.reorderQty),
+        });
+      } else {
+        const wh = warehouses.find(w => w.id === (form.warehouseId || warehouses[0]?.id));
+        await productsApi.create({
+          name: form.name.trim(),
+          sku: form.sku.trim(),
+          category: form.category.trim(),
+          unitOfMeasure: form.unitOfMeasure,
+          reorderThreshold: toNum(form.reorderThreshold),
+          reorderQty: toNum(form.reorderQty),
+          initialStock: form.initialStock > 0 ? form.initialStock : undefined,
+          locationId: wh?.locations[0]?.id,
+        });
+      }
+      showToast(isEdit ? 'Product updated successfully!' : 'Product created successfully!', 'success');
+      onSaved?.();
+      onClose();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) setErrors({ sku: 'A product with this SKU already exists.' });
+      else showToast(err instanceof Error ? err.message : 'Could not save product.', 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleDeactivate = async () => {
     if (!window.confirm('Are you sure you want to deactivate this product? This action cannot be undone. The product will be hidden from new operations but preserved in history.')) return;
+    if (!product) return;
     setLoading(true);
-    await new Promise(res => setTimeout(res, 500));
-    setLoading(false);
-    showToast('Product deactivated.', 'warning');
-    onClose();
+    try {
+      await productsApi.remove(product.id);
+      showToast('Product deactivated.', 'warning');
+      onSaved?.();
+      onClose();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Could not deactivate product.', 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -91,10 +131,7 @@ export function ProductModal({ product, onClose }: Props) {
                 <input id="prod-category" className={`input${errors.category ? ' error' : ''}`} placeholder="e.g. Furniture"
                   value={form.category} onChange={set('category')} list="category-list" />
                 <datalist id="category-list">
-                  <option value="Furniture" />
-                  <option value="Electronics" />
-                  <option value="Storage" />
-                  <option value="Office Supplies" />
+                  {categoryList.map(c => <option key={c.id} value={c.name} />)}
                 </datalist>
                 {errors.category && <span className="form-error">{errors.category}</span>}
               </div>
@@ -119,8 +156,8 @@ export function ProductModal({ product, onClose }: Props) {
                   </div>
                   <div className="form-group">
                     <label className="form-label" htmlFor="prod-warehouse">Warehouse</label>
-                    <select id="prod-warehouse" className="input select" value={form.warehouseId} onChange={set('warehouseId')}>
-                      {mockWarehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                    <select id="prod-warehouse" className="input select" value={form.warehouseId || warehouses[0]?.id || ''} onChange={set('warehouseId')}>
+                      {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                     </select>
                   </div>
                 </>

@@ -1,13 +1,17 @@
 // Stock Page — shows per-product, per-location stock levels
 import { useState } from 'react';
 import { Search, Boxes } from 'lucide-react';
-import { mockProducts } from '../data/mockData';
+import { products as productsApi } from '../api';
+import { useApi } from '../api/useApi';
+import { AsyncState } from '../components/AsyncState';
 import type { Product } from '../types';
 
 export default function StockPage() {
   const [search, setSearch] = useState('');
+  const { data: allProducts, loading, error, reload } = useApi(() => productsApi.list());
+  if (!allProducts) return <AsyncState loading={loading} error={error} onRetry={reload} />;
 
-  const filtered = mockProducts.filter((p: Product) => {
+  const filtered = allProducts.filter((p: Product) => {
     const q = search.toLowerCase();
     return !q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q);
   });

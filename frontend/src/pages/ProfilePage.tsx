@@ -3,9 +3,11 @@ import { useState } from 'react';
 import { User, Shield, Mail, KeyRound, LogOut, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { users as usersApi } from '../api';
+import { errMsg } from '../utils/format';
 
 export default function ProfilePage() {
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser } = useAuth();
   const { showToast } = useToast();
 
   const [name, setName] = useState(user?.name || 'Administrator');
@@ -17,16 +19,20 @@ export default function ProfilePage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [pwdMsg, setPwdMsg] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
-    setTimeout(() => {
-      setIsSaving(false);
+    try {
+      updateUser(await usersApi.updateMe({ name: name.trim() }));
       showToast('Profile information updated successfully.', 'success');
-    }, 400);
+    } catch (err) {
+      showToast(errMsg(err, 'Could not update profile.'), 'error');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleChangePassword = (e: React.FormEvent) => {
+  const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentPassword) {
       setPwdMsg({ type: 'error', text: 'Current password is required.' });
@@ -41,10 +47,16 @@ export default function ProfilePage() {
       return;
     }
 
+    try {
+      await usersApi.changePassword(currentPassword, newPassword);
+    } catch (err) {
+      setPwdMsg({ type: 'error', text: errMsg(err, 'Could not change password.') });
+      return;
+    }
     setPwdMsg({ type: 'success', text: 'Password has been updated successfully.' });
     setCurrentPassword('');
     setNewPassword('');
-    confirmPassword && setConfirmPassword('');
+    setConfirmPassword('');
     showToast('Password changed successfully', 'success');
   };
 

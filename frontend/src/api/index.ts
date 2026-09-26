@@ -1,4 +1,4 @@
-// Typed endpoint helpers. Pages should call these instead of importing data/mockData.
+// Typed endpoint helpers. Pages should call these.
 import { authRequest, del, get, patch, post, type Session } from './client';
 import type {
   DashboardKPIs,

@@ -1,14 +1,17 @@
 // Inventory Adjustments List Page
 import { useState } from 'react';
 import { Plus, Search, ClipboardList } from 'lucide-react';
-import { mockAdjustments as initialAdjustments } from '../../data/mockData';
-import type { StockAdjustment } from '../../types';
+import { adjustments as adjustmentsApi } from '../../api';
+import { useApi } from '../../api/useApi';
+import { AsyncState } from '../../components/AsyncState';
+import { fmtDate } from '../../utils/format';
 import { AdjustmentModal } from './AdjustmentModal';
 
 export default function AdjustmentsPage() {
-  const [adjustments, setAdjustments] = useState<StockAdjustment[]>(initialAdjustments);
+  const { data: adjustments, loading, error, reload } = useApi(() => adjustmentsApi.list());
   const [search, setSearch] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  if (!adjustments) return <AsyncState loading={loading} error={error} onRetry={reload} />;
 
   const filtered = adjustments.filter(adj => {
     const q = search.toLowerCase();
@@ -20,9 +23,8 @@ export default function AdjustmentsPage() {
     );
   });
 
-  const handleSaveAdjustment = (newAdj: StockAdjustment) => {
-    setAdjustments([newAdj, ...adjustments]);
-  };
+  // The modal saves through the API; just refetch the list afterwards.
+  const handleSaveAdjustment = () => reload();
 
   return (
     <div>
@@ -134,7 +136,7 @@ export default function AdjustmentsPage() {
                       <td>
                         <span className="badge badge-done">{adj.status}</span>
                       </td>
-                      <td style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>{adj.createdAt}</td>
+                      <td style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>{fmtDate(adj.createdAt)}</td>
                     </tr>
                   );
                 })}

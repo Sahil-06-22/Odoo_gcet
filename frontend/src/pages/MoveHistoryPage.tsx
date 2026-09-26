@@ -1,14 +1,20 @@
 // Move History / Stock Ledger Page
 import { useState } from 'react';
 import { Search, History, ArrowDownLeft, ArrowUpRight, ArrowLeftRight, RotateCcw, Filter } from 'lucide-react';
-import { mockLedger } from '../data/mockData';
+import { ledger as ledgerApi } from '../api';
+import { useApi } from '../api/useApi';
+import { AsyncState } from '../components/AsyncState';
+import { fmtDateTime } from '../utils/format';
 import type { MovementType } from '../types';
 
 export default function MoveHistoryPage() {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<MovementType | 'ALL'>('ALL');
 
-  const filtered = mockLedger.filter(entry => {
+  const { data: ledgerEntries, loading, error, reload } = useApi(() => ledgerApi.list({ limit: 500 }));
+  if (!ledgerEntries) return <AsyncState loading={loading} error={error} onRetry={reload} />;
+
+  const filtered = ledgerEntries.filter(entry => {
     const q = search.toLowerCase();
     const matchSearch =
       entry.reference.toLowerCase().includes(q) ||
@@ -19,7 +25,9 @@ export default function MoveHistoryPage() {
       entry.contact.toLowerCase().includes(q) ||
       (entry.actor && entry.actor.toLowerCase().includes(q));
 
-    const matchType = typeFilter === 'ALL' || entry.movementType === typeFilter;
+    // The API reports transfers as TRANSFER; the filter chip / type union also uses INTERNAL_TRANSFER.
+    const norm = (t: MovementType) => (t === 'INTERNAL_TRANSFER' ? 'TRANSFER' : t);
+    const matchType = typeFilter === 'ALL' || norm(entry.movementType) === norm(typeFilter);
     return matchSearch && matchType;
   });
 
@@ -37,6 +45,7 @@ export default function MoveHistoryPage() {
             <ArrowUpRight size={12} /> Delivery
           </span>
         );
+      case 'TRANSFER':
       case 'INTERNAL_TRANSFER':
         return (
           <span className="badge" style={{ background: 'rgba(168, 85, 247, 0.15)', color: '#9333ea', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -61,7 +70,7 @@ export default function MoveHistoryPage() {
           <p className="page-subtitle">Immutable append-only audit ledger of every inventory transaction</p>
         </div>
         <div style={{ fontSize: 13, color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <History size={16} /> Total movements: {mockLedger.length}
+          <History size={16} /> Total movements: {ledgerEntries.length}
         </div>
       </div>
 
@@ -162,7 +171,7 @@ export default function MoveHistoryPage() {
 
                   return (
                     <tr key={entry.id}>
-                      <td style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>{entry.date}</td>
+                      <td style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>{fmtDateTime(entry.date)}</td>
                       <td style={{ fontWeight: 600, color: 'var(--color-accent)' }}>{entry.reference}</td>
                       <td>{getMovementBadge(entry.movementType)}</td>
                       <td>

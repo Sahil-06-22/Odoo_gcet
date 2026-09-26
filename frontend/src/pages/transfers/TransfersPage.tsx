@@ -2,7 +2,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, ArrowLeftRight, List, LayoutGrid } from 'lucide-react';
-import { mockTransfers } from '../../data/mockData';
+import { transfers as transfersApi } from '../../api';
+import { useApi } from '../../api/useApi';
+import { AsyncState } from '../../components/AsyncState';
+import { fmtDate } from '../../utils/format';
 import type { DocumentStatus } from '../../types';
 
 export default function TransfersPage() {
@@ -11,7 +14,10 @@ export default function TransfersPage() {
   const [statusFilter, setStatusFilter] = useState<DocumentStatus | 'ALL'>('ALL');
   const [viewMode, setViewMode] = useState<'list' | 'kanban'>('list');
 
-  const filtered = mockTransfers.filter(t => {
+  const { data: transferList, loading, error, reload } = useApi(() => transfersApi.list());
+  if (!transferList) return <AsyncState loading={loading} error={error} onRetry={reload} />;
+
+  const filtered = transferList.filter(t => {
     const matchSearch =
       t.reference.toLowerCase().includes(search.toLowerCase()) ||
       t.sourceLocationName.toLowerCase().includes(search.toLowerCase()) ||
@@ -159,7 +165,7 @@ export default function TransfersPage() {
                     <td>{t.sourceLocationName}</td>
                     <td>{t.destLocationName}</td>
                     <td>{t.contact}</td>
-                    <td style={{ color: 'var(--color-text-muted)' }}>{t.scheduledDate || '—'}</td>
+                    <td style={{ color: 'var(--color-text-muted)' }}>{fmtDate(t.scheduledDate)}</td>
                     <td>
                       <span className={getStatusBadge(t.status)}>{t.status}</span>
                     </td>
@@ -187,7 +193,7 @@ export default function TransfersPage() {
                 <div><strong>From:</strong> {t.sourceLocationName}</div>
                 <div><strong>To:</strong> {t.destLocationName}</div>
                 <div><strong>Contact:</strong> {t.contact}</div>
-                <div><strong>Scheduled:</strong> {t.scheduledDate || '—'}</div>
+                <div><strong>Scheduled:</strong> {fmtDate(t.scheduledDate)}</div>
                 <div><strong>Items:</strong> {t.lines.length} line(s)</div>
               </div>
             </div>

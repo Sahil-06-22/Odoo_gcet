@@ -1,14 +1,15 @@
 // Warehouses & Locations Management Page (Manager Only)
 import { useState, useId } from 'react';
 import { Plus, Warehouse as WarehouseIcon, MapPin, Layers, X, AlertCircle } from 'lucide-react';
-import { mockWarehouses as initialWarehouses } from '../../data/mockData';
-import type { Warehouse } from '../../types';
+import { warehouses as warehousesApi } from '../../api';
+import { useApi } from '../../api/useApi';
+import { AsyncState } from '../../components/AsyncState';
 import { useToast } from '../../context/ToastContext';
 
 export default function WarehousesPage() {
   const { showToast } = useToast();
   const formId = useId();
-  const [warehouses, setWarehouses] = useState<Warehouse[]>(initialWarehouses);
+  const { data: warehouses, loading, error, reload } = useApi(() => warehousesApi.list());
 
   // Modals state
   const [isWhModalOpen, setIsWhModalOpen] = useState(false);
@@ -23,8 +24,9 @@ export default function WarehousesPage() {
   const [locCode, setLocCode] = useState('');
   const [locError, setLocError] = useState('');
 
-  const handleCreateWarehouse = (e: React.FormEvent) => {
+  const handleCreateWarehouse = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!warehouses) return;
     if (!whName.trim() || !whCode.trim()) {
       setWhError('Warehouse name and short code are required.');
       return;
@@ -35,22 +37,14 @@ export default function WarehousesPage() {
       return;
     }
 
-    const newWh: Warehouse = {
-      id: `wh-${Date.now()}`,
-      name: whName.trim(),
-      shortCode: whCode.trim().toUpperCase(),
-      address: whAddress.trim(),
-      locations: [
-        {
-          id: `loc-${Date.now()}`,
-          name: 'Stock 1',
-          shortCode: 'Stock1',
-          warehouseId: `wh-${Date.now()}`,
-        },
-      ],
-    };
-
-    setWarehouses([...warehouses, newWh]);
+    let newWh;
+    try {
+      newWh = await warehousesApi.create({ name: whName.trim(), shortCode: whCode.trim().toUpperCase(), address: whAddress.trim() });
+    } catch (err) {
+      setWhError(err instanceof Error ? err.message : 'Could not create warehouse.');
+      return;
+    }
+    reload();
     showToast(`Warehouse "${newWh.name}" created with default Stock 1 location.`, 'success');
     setIsWhModalOpen(false);
     setWhName('');
@@ -67,8 +61,9 @@ export default function WarehousesPage() {
     setIsLocModalOpen(true);
   };
 
-  const handleCreateLocation = (e: React.FormEvent) => {
+  const handleCreateLocation = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!warehouses) return;
     if (!locName.trim() || !locCode.trim()) {
       setLocError('Location name and short code are required.');
       return;
@@ -82,28 +77,18 @@ export default function WarehousesPage() {
       return;
     }
 
-    const updatedWarehouses = warehouses.map(w => {
-      if (w.id === selectedWhId) {
-        return {
-          ...w,
-          locations: [
-            ...w.locations,
-            {
-              id: `loc-${Date.now()}`,
-              name: locName.trim(),
-              shortCode: locCode.trim().toUpperCase(),
-              warehouseId: w.id,
-            },
-          ],
-        };
-      }
-      return w;
-    });
-
-    setWarehouses(updatedWarehouses);
+    try {
+      await warehousesApi.addLocation(selectedWhId, { name: locName.trim(), shortCode: locCode.trim() });
+    } catch (err) {
+      setLocError(err instanceof Error ? err.message : 'Could not add location.');
+      return;
+    }
+    reload();
     showToast(`Location "${locName}" added to ${wh.name}.`, 'success');
     setIsLocModalOpen(false);
   };
+
+  if (!warehouses) return <AsyncState loading={loading} error={error} onRetry={reload} />;
 
   return (
     <div>

@@ -1,7 +1,8 @@
 // Stock Adjustment Create Modal
 import { useState, useId } from 'react';
 import { X, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { mockProducts, mockWarehouses } from '../../data/mockData';
+import { products as productsApi, warehouses as warehousesApi, adjustments as adjustmentsApi } from '../../api';
+import { useApi } from '../../api/useApi';
 import type { StockAdjustment } from '../../types';
 import { useToast } from '../../context/ToastContext';
 
@@ -15,60 +16,77 @@ export function AdjustmentModal({ isOpen, onClose, onSave }: AdjustmentModalProp
   const { showToast } = useToast();
   const formId = useId();
 
-  const allLocations = mockWarehouses.flatMap(w =>
+  // Only fetch while the modal is open so the numbers are fresh each time.
+  const { data: productList = [] } = useApi(() => (isOpen ? productsApi.list() : Promise.resolve([])), [isOpen]);
+  const { data: warehouseList = [] } = useApi(() => (isOpen ? warehousesApi.list() : Promise.resolve([])), [isOpen]);
+  const allLocations = warehouseList.flatMap(w =>
     w.locations.map(loc => ({
       ...loc,
       label: `${w.shortCode}/${loc.name}`,
     }))
   );
 
-  const [selectedProductId, setSelectedProductId] = useState(mockProducts[0]?.id || '');
-  const [selectedLocationId, setSelectedLocationId] = useState(allLocations[0]?.id || '');
-  
-  const currentProduct = mockProducts.find(p => p.id === selectedProductId) || mockProducts[0];
-  const recordedQty = currentProduct?.totalStock ?? 0;
+  const [pickedProductId, setPickedProductId] = useState('');
+  const [pickedLocationId, setPickedLocationId] = useState('');
+  const selectedProductId = pickedProductId || productList[0]?.id || '';
+  const selectedLocationId = pickedLocationId || allLocations[0]?.id || '';
+  const currentProduct = productList.find(p => p.id === selectedProductId);
 
-  const [countedQty, setCountedQty] = useState<number>(recordedQty);
+  // "System recorded" is what the server has for this product at this location right now.
+  const { data: recordedQty = 0 } = useApi(
+    () => (isOpen && selectedProductId && selectedLocationId ? adjustmentsApi.recordedQty(selectedProductId, selectedLocationId) : Promise.resolve(0)),
+    [isOpen, selectedProductId, selectedLocationId],
+  );
+
+  const [pickedCount, setPickedCount] = useState<number | null>(null); // null = not edited yet, mirror recorded
+  const countedQty = pickedCount ?? recordedQty;
   const [reason, setReason] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [saving, setSaving] = useState(false);
 
   if (!isOpen) return null;
 
   const difference = countedQty - recordedQty;
 
   const handleProductChange = (id: string) => {
-    setSelectedProductId(id);
-    const p = mockProducts.find(prod => prod.id === id);
-    if (p) {
-      setCountedQty(p.totalStock);
-    }
+    setPickedProductId(id);
+    setPickedCount(null);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleLocationChange = (id: string) => {
+    setPickedLocationId(id);
+    setPickedCount(null);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!reason.trim()) {
       setErrorMsg('A valid reason is required for inventory adjustment (Audit Requirement).');
       return;
     }
+    if (!currentProduct || !selectedLocationId) {
+      setErrorMsg('Select a product and a location.');
+      return;
+    }
 
-    const newAdjustment: StockAdjustment = {
-      id: `adj-${Date.now()}`,
-      reference: `WH/ADJ/${String(Math.floor(1000 + Math.random() * 9000))}`,
-      productId: currentProduct.id,
-      productName: currentProduct.name,
-      locationId: selectedLocationId,
-      locationName: allLocations.find(l => l.id === selectedLocationId)?.label || 'WH/Stock1',
-      recordedQty,
-      countedQty,
-      difference,
-      reason: reason.trim(),
-      status: 'DONE',
-      createdAt: new Date().toISOString().split('T')[0],
-    };
-
-    onSave(newAdjustment);
-    showToast(`Adjustment applied: ${difference > 0 ? '+' : ''}${difference} units for ${currentProduct.name}`, 'success');
-    onClose();
+    setSaving(true);
+    try {
+      const saved = await adjustmentsApi.create({
+        productId: currentProduct.id,
+        locationId: selectedLocationId,
+        countedQty,
+        reason: reason.trim(),
+      });
+      onSave(saved);
+      showToast(`Adjustment applied: ${saved.difference > 0 ? '+' : ''}${saved.difference} units for ${currentProduct.name}`, 'success');
+      setReason('');
+      setPickedCount(null);
+      onClose();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Could not apply adjustment.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -150,9 +168,9 @@ export function AdjustmentModal({ isOpen, onClose, onSave }: AdjustmentModalProp
               onChange={e => handleProductChange(e.target.value)}
               style={{ width: '100%' }}
             >
-              {mockProducts.map(p => (
+              {productList.map(p => (
                 <option key={p.id} value={p.id}>
-                  {p.name} ({p.sku}) — Available: {p.totalStock} {p.unitOfMeasure}
+                  {p.name} ({p.sku}) — Total: {p.totalStock} {p.unitOfMeasure}
                 </option>
               ))}
             </select>
@@ -165,7 +183,7 @@ export function AdjustmentModal({ isOpen, onClose, onSave }: AdjustmentModalProp
               id={`${formId}-location`}
               className="select"
               value={selectedLocationId}
-              onChange={e => setSelectedLocationId(e.target.value)}
+              onChange={e => handleLocationChange(e.target.value)}
               style={{ width: '100%' }}
             >
               {allLocations.map(loc => (
@@ -208,7 +226,7 @@ export function AdjustmentModal({ isOpen, onClose, onSave }: AdjustmentModalProp
                 className="input"
                 min={0}
                 value={countedQty}
-                onChange={e => setCountedQty(parseInt(e.target.value) || 0)}
+                onChange={e => setPickedCount(Math.max(0, parseInt(e.target.value) || 0))}
                 style={{ textAlign: 'center', fontWeight: 700, fontSize: 18, marginTop: 4, padding: '4px 8px' }}
               />
             </div>
@@ -263,8 +281,8 @@ export function AdjustmentModal({ isOpen, onClose, onSave }: AdjustmentModalProp
             <button type="button" className="btn btn-secondary" onClick={onClose}>
               Cancel
             </button>
-            <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <CheckCircle2 size={16} /> Apply & Adjust Stock
+            <button type="submit" className="btn btn-primary" disabled={saving} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <CheckCircle2 size={16} /> {saving ? 'Applying…' : 'Apply & Adjust Stock'}
             </button>
           </div>
         </form>

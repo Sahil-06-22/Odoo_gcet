@@ -5,7 +5,10 @@ import {
   Package, AlertTriangle, PackageCheck, Truck,
   ArrowLeftRight, RotateCcw, ChevronRight, TrendingUp,
 } from 'lucide-react';
-import { mockKPIs, mockReceipts, mockDeliveries, mockTransfers } from '../data/mockData';
+import { dashboard, receipts, deliveries, transfers } from '../api';
+import { useApi } from '../api/useApi';
+import { AsyncState } from '../components/AsyncState';
+import { fmtDate } from '../utils/format';
 import type { DocumentStatus } from '../types';
 
 function StatusBadge({ status }: { status: DocumentStatus }) {
@@ -23,22 +26,35 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<string>('ALL');
 
+  const { data, loading, error, reload } = useApi(async () => {
+    const [k, r, d, t] = await Promise.all([dashboard.kpis(), receipts.list(), deliveries.list(), transfers.list()]);
+    return { k, r, d, t };
+  });
+  if (!data) return <AsyncState loading={loading} error={error} onRetry={reload} />;
+  const { k: kpiData, r: receiptList, d: deliveryList, t: transferList } = data;
+
+  const isOpen = (s: DocumentStatus) => s === 'DRAFT' || s === 'WAITING' || s === 'READY';
+  const today = new Date().toISOString().slice(0, 10);
+  const lateReceipts = receiptList.filter(r => isOpen(r.status) && r.scheduledDate.slice(0, 10) < today).length;
+  const lateDeliveries = deliveryList.filter(d => isOpen(d.status) && d.scheduledDate.slice(0, 10) < today).length;
+  const waitingDeliveries = deliveryList.filter(d => d.status === 'WAITING').length;
+
   const kpis = [
-    { label: 'Total Products', value: mockKPIs.totalProducts, icon: Package, color: 'var(--color-info)', bg: 'var(--color-info-bg)', route: '/products' },
-    { label: 'Low Stock Items', value: mockKPIs.lowStockItems, icon: AlertTriangle, color: 'var(--color-warning)', bg: 'var(--color-warning-bg)', route: '/products?status=LOW_STOCK' },
-    { label: 'Out of Stock', value: mockKPIs.outOfStockItems, icon: AlertTriangle, color: 'var(--color-error)', bg: 'var(--color-error-bg)', route: '/products?status=OUT_OF_STOCK' },
-    { label: 'Pending Receipts', value: mockKPIs.pendingReceipts, icon: PackageCheck, color: 'var(--color-accent)', bg: 'var(--color-accent-muted)', route: '/receipts' },
-    { label: 'Pending Deliveries', value: mockKPIs.pendingDeliveries, icon: Truck, color: 'var(--color-success)', bg: 'var(--color-success-bg)', route: '/deliveries' },
-    { label: 'Scheduled Transfers', value: mockKPIs.scheduledTransfers, icon: ArrowLeftRight, color: '#a78bfa', bg: 'rgba(167,139,250,0.15)', route: '/transfers' },
+    { label: 'Total Products', value: kpiData.totalProducts, icon: Package, color: 'var(--color-info)', bg: 'var(--color-info-bg)', route: '/products' },
+    { label: 'Low Stock Items', value: kpiData.lowStockItems, icon: AlertTriangle, color: 'var(--color-warning)', bg: 'var(--color-warning-bg)', route: '/products?status=LOW_STOCK' },
+    { label: 'Out of Stock', value: kpiData.outOfStockItems, icon: AlertTriangle, color: 'var(--color-error)', bg: 'var(--color-error-bg)', route: '/products?status=OUT_OF_STOCK' },
+    { label: 'Pending Receipts', value: kpiData.pendingReceipts, icon: PackageCheck, color: 'var(--color-accent)', bg: 'var(--color-accent-muted)', route: '/receipts' },
+    { label: 'Pending Deliveries', value: kpiData.pendingDeliveries, icon: Truck, color: 'var(--color-success)', bg: 'var(--color-success-bg)', route: '/deliveries' },
+    { label: 'Scheduled Transfers', value: kpiData.scheduledTransfers, icon: ArrowLeftRight, color: '#a78bfa', bg: 'rgba(167,139,250,0.15)', route: '/transfers' },
   ];
 
   // Build unified operations list
-  type Op = { ref: string; type: string; contact: string; status: DocumentStatus; date: string; route: string };
+  type Op = { ref: string; type: string; contact: string; status: DocumentStatus; date: string; route: string; created: string };
   const ops: Op[] = [
-    ...mockReceipts.map(r => ({ ref: r.reference, type: 'Receipt', contact: r.supplier, status: r.status, date: r.scheduledDate, route: `/receipts/${r.id}` })),
-    ...mockDeliveries.map(d => ({ ref: d.reference, type: 'Delivery', contact: d.contact, status: d.status, date: d.scheduledDate, route: `/deliveries/${d.id}` })),
-    ...mockTransfers.map(t => ({ ref: t.reference, type: 'Transfer', contact: 'Internal', status: t.status, date: t.scheduledDate, route: `/transfers/${t.id}` })),
-  ];
+    ...receiptList.map(r => ({ ref: r.reference, type: 'Receipt', contact: r.supplier, status: r.status, date: fmtDate(r.scheduledDate), created: r.createdAt, route: `/receipts/${r.id}` })),
+    ...deliveryList.map(d => ({ ref: d.reference, type: 'Delivery', contact: d.contact, status: d.status, date: fmtDate(d.scheduledDate), created: d.createdAt, route: `/deliveries/${d.id}` })),
+    ...transferList.map(t => ({ ref: t.reference, type: 'Transfer', contact: t.contact || 'Internal', status: t.status, date: fmtDate(t.scheduledDate), created: t.createdAt, route: `/transfers/${t.id}` })),
+  ].sort((a, b) => b.created.localeCompare(a.created)).slice(0, 30);
 
   const filters = ['ALL', 'Receipt', 'Delivery', 'Transfer'];
   const filtered = filter === 'ALL' ? ops : ops.filter(o => o.type === filter);
@@ -180,12 +196,12 @@ export default function DashboardPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
             <div>
               <button className="btn btn-primary" onClick={e => { e.stopPropagation(); navigate('/receipts'); }}>
-                {mockKPIs.pendingReceipts} to receive
+                {kpiData.pendingReceipts} to receive
               </button>
             </div>
             <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-muted)' }}>
-              <div>1 Late</div>
-              <div>{mockReceipts.length} operations</div>
+              <div>{lateReceipts} Late</div>
+              <div>{receiptList.length} operations</div>
             </div>
           </div>
         </div>
@@ -207,13 +223,13 @@ export default function DashboardPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
             <div>
               <button className="btn btn-primary" onClick={e => { e.stopPropagation(); navigate('/deliveries'); }}>
-                {mockKPIs.pendingDeliveries} to Deliver
+                {kpiData.pendingDeliveries} to Deliver
               </button>
             </div>
             <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-muted)' }}>
-              <div>1 Late</div>
-              <div>2 Waiting</div>
-              <div>{mockDeliveries.length} operations</div>
+              <div>{lateDeliveries} Late</div>
+              <div>{waitingDeliveries} Waiting</div>
+              <div>{deliveryList.length} operations</div>
             </div>
           </div>
         </div>

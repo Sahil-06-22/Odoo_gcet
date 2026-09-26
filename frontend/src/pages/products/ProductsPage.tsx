@@ -2,7 +2,9 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Search, Package, X } from 'lucide-react';
-import { mockProducts } from '../../data/mockData';
+import { products as productsApi } from '../../api';
+import { useApi } from '../../api/useApi';
+import { AsyncState } from '../../components/AsyncState';
 import type { Product } from '../../types';
 import { ProductModal } from './ProductModal';
 
@@ -21,10 +23,13 @@ export default function ProductsPage() {
   const [showModal, setShowModal] = useState(false);
   const [editProduct, setEditProduct] = useState<Product | null>(null);
 
-  const categories = ['ALL', ...Array.from(new Set(mockProducts.map(p => p.category)))];
+  const { data: allProducts, loading, error, reload } = useApi(() => productsApi.list());
+  if (!allProducts) return <AsyncState loading={loading} error={error} onRetry={reload} />;
+
+  const categories = ['ALL', ...Array.from(new Set(allProducts.map(p => p.category)))];
   const stockStatuses = ['ALL', 'IN_STOCK', 'LOW_STOCK', 'OUT_OF_STOCK'];
 
-  const filtered = mockProducts.filter(p => {
+  const filtered = allProducts.filter(p => {
     const q = search.toLowerCase();
     const matchSearch = !q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q);
     const matchCat = categoryFilter === 'ALL' || p.category === categoryFilter;
@@ -142,7 +147,7 @@ export default function ProductsPage() {
 
         {/* Pagination */}
         <div className="pagination">
-          <span className="pagination-info">Showing {filtered.length} of {mockProducts.length} products</span>
+          <span className="pagination-info">Showing {filtered.length} of {allProducts.length} products</span>
           <div className="pagination-controls">
             <button className="page-btn" disabled>←</button>
             <button className="page-btn active">1</button>
@@ -155,6 +160,7 @@ export default function ProductsPage() {
         <ProductModal
           product={editProduct}
           onClose={() => setShowModal(false)}
+          onSaved={reload}
         />
       )}
     </div>

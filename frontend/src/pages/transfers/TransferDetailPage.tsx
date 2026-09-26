@@ -2,20 +2,42 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { CheckCircle, Printer, X, Plus, AlertCircle, ChevronLeft, Trash2 } from 'lucide-react';
-import { mockTransfers, mockProducts, mockWarehouses } from '../../data/mockData';
-import type { TransferLine, DocumentStatus } from '../../types';
+import { transfers as transfersApi, products as productsApi, warehouses as warehousesApi } from '../../api';
+import { useApi } from '../../api/useApi';
+import { AsyncState } from '../../components/AsyncState';
+import type { TransferLine, DocumentStatus, InternalTransfer, Product, Warehouse } from '../../types';
 import { useToast } from '../../context/ToastContext';
+import { errMsg, toDateInput } from '../../utils/format';
 
 export default function TransferDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const { showToast } = useToast();
   const isNew = !id || id === 'new';
 
-  const existingTransfer = isNew ? null : mockTransfers.find(t => t.id === id);
+  const { data, loading, error, reload } = useApi(async () => {
+    const [products, warehouses, existing] = await Promise.all([
+      productsApi.list(),
+      warehousesApi.list(),
+      isNew ? Promise.resolve(null) : transfersApi.get(id!),
+    ]);
+    return { products, warehouses, existing };
+  }, [id]);
+
+  if (!data) return <AsyncState loading={loading} error={error} onRetry={reload} />;
+  return <TransferForm key={data.existing?.id ?? 'new'} {...data} />;
+}
+
+interface FormProps {
+  existing: InternalTransfer | null;
+  products: Product[];
+  warehouses: Warehouse[];
+}
+
+function TransferForm({ existing, products, warehouses }: FormProps) {
+  const navigate = useNavigate();
+  const { showToast } = useToast();
 
   // Extract all available locations
-  const allLocations = mockWarehouses.flatMap(w =>
+  const allLocations = warehouses.flatMap(w =>
     w.locations.map(loc => ({
       ...loc,
       warehouseName: w.name,
@@ -23,33 +45,34 @@ export default function TransferDetailPage() {
     }))
   );
 
-  const [sourceLoc, setSourceLoc] = useState(
-    existingTransfer?.sourceLocationId || (allLocations[0]?.id || '')
-  );
-  const [destLoc, setDestLoc] = useState(
-    existingTransfer?.destLocationId || (allLocations[1]?.id || '')
-  );
-  const [contact, setContact] = useState(existingTransfer?.contact || 'Internal Transfer');
-  const [scheduledDate, setScheduledDate] = useState(existingTransfer?.scheduledDate || new Date().toISOString().split('T')[0]);
-  const [status, setStatus] = useState<DocumentStatus>(existingTransfer?.status || 'DRAFT');
+  const [doc, setDoc] = useState<InternalTransfer | null>(existing);
+  const [sourceLoc, setSourceLoc] = useState(existing?.sourceLocationId || (allLocations[0]?.id || ''));
+  const [destLoc, setDestLoc] = useState(existing?.destLocationId || (allLocations[1]?.id || ''));
+  const [contact, setContact] = useState(existing?.contact || 'Internal Transfer');
+  const [scheduledDate, setScheduledDate] = useState(toDateInput(existing?.scheduledDate) || new Date().toISOString().split('T')[0]);
   const [lines, setLines] = useState<TransferLine[]>(
-    existingTransfer?.lines || [
-      {
-        id: 'tl-new-1',
-        productId: mockProducts[0]?.id || '',
-        productName: mockProducts[0]?.name || '',
-        productSku: mockProducts[0]?.sku || '',
-        quantity: 5,
-      },
-    ]
+    existing?.lines || (products[0]
+      ? [{ id: 'tl-new-1', productId: products[0].id, productName: products[0].name, productSku: products[0].sku, quantity: 1 }]
+      : [])
   );
   const [errorMsg, setErrorMsg] = useState('');
+  const [busy, setBusy] = useState(false);
 
+  const status: DocumentStatus = doc?.status ?? 'DRAFT';
   const isReadonly = status === 'DONE' || status === 'CANCELLED';
+  const canValidate = status === 'READY' || status === 'WAITING';
+
+  const applyDoc = (d: InternalTransfer) => {
+    setDoc(d);
+    setContact(d.contact);
+    setScheduledDate(toDateInput(d.scheduledDate));
+    setLines(d.lines);
+  };
 
   const handleAddLine = () => {
     if (isReadonly) return;
-    const p = mockProducts[0];
+    const p = products[0];
+    if (!p) return;
     setLines([
       ...lines,
       {
@@ -68,7 +91,7 @@ export default function TransferDetailPage() {
   };
 
   const handleProductChange = (idx: number, productId: string) => {
-    const prod = mockProducts.find(p => p.id === productId);
+    const prod = products.find(p => p.id === productId);
     if (!prod) return;
     const updated = [...lines];
     updated[idx] = {
@@ -86,48 +109,76 @@ export default function TransferDetailPage() {
     setLines(updated);
   };
 
-  const handleSaveDraft = () => {
-    if (sourceLoc === destLoc) {
-      setErrorMsg('Source and Destination locations must be different.');
+  const problem = (needLines: boolean) => {
+    if (sourceLoc === destLoc) return 'Source and Destination locations must be different.';
+    if (needLines && lines.length === 0) return 'Please add at least one product line.';
+    return '';
+  };
+
+  const save = (): Promise<InternalTransfer> => {
+    const payloadLines = lines.map(l => ({ productId: l.productId, quantity: l.quantity ?? 1 }));
+    if (doc) return transfersApi.update(doc.id, { contact: contact.trim() || undefined, scheduledDate: scheduledDate || undefined, lines: payloadLines });
+    return transfersApi.create({
+      sourceLocationId: sourceLoc,
+      destLocationId: destLoc,
+      contact: contact.trim() || undefined,
+      scheduledDate: scheduledDate || undefined,
+      lines: payloadLines,
+    });
+  };
+
+  /** Save, then optionally run a workflow step (confirm / validate). Returns the resulting document. */
+  const run = async (needLines: boolean, step?: (id: string) => Promise<InternalTransfer>) => {
+    const msg = problem(needLines);
+    if (msg) {
+      setErrorMsg(msg);
       return;
     }
     setErrorMsg('');
-    showToast('Transfer saved as Draft', 'info');
-    navigate('/transfers');
+    setBusy(true);
+    let saved: InternalTransfer | null = null;
+    try {
+      saved = await save();
+      const result = step ? await step(saved.id) : saved;
+      if (!doc) navigate(`/transfers/${result.id}`, { replace: true });
+      else applyDoc(result);
+      return result;
+    } catch (e) {
+      if (saved && !doc) navigate(`/transfers/${saved.id}`, { replace: true });
+      else if (saved) applyDoc(saved);
+      setErrorMsg(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const handleMarkReady = () => {
-    if (sourceLoc === destLoc) {
-      setErrorMsg('Source and Destination locations must be different.');
-      return;
+  const handleSaveDraft = async () => {
+    if (await run(false)) {
+      showToast('Transfer saved as Draft', 'info');
+      navigate('/transfers');
     }
-    if (lines.length === 0) {
-      setErrorMsg('Please add at least one product line.');
-      return;
-    }
-    setStatus('READY');
-    setErrorMsg('');
-    showToast('Transfer marked as Ready for execution', 'success');
   };
 
-  const handleValidate = () => {
-    if (sourceLoc === destLoc) {
-      setErrorMsg('Source and Destination locations must be different.');
-      return;
-    }
-    if (lines.length === 0) {
-      setErrorMsg('Please add at least one line item to validate.');
-      return;
-    }
-    setStatus('DONE');
-    setErrorMsg('');
-    showToast('Internal transfer validated! Stock ledger updated.', 'success');
+  const handleMarkReady = async () => {
+    const r = await run(true, transfersApi.confirm);
+    if (r) showToast(r.status === 'WAITING' ? 'Waiting for stock at the source location' : 'Transfer marked as Ready for execution', r.status === 'WAITING' ? 'warning' : 'success');
   };
 
-  const handleCancel = () => {
-    if (confirm('Are you sure you want to cancel this transfer? This action cannot be undone.')) {
-      setStatus('CANCELLED');
+  const handleValidate = async () => {
+    if (await run(true, id => transfersApi.validate(id))) showToast('Internal transfer validated! Stock ledger updated.', 'success');
+  };
+
+  const handleCancel = async () => {
+    if (!doc) return navigate('/transfers');
+    if (!confirm('Are you sure you want to cancel this transfer? This action cannot be undone.')) return;
+    setBusy(true);
+    try {
+      applyDoc(await transfersApi.cancel(doc.id));
       showToast('Transfer cancelled', 'warning');
+    } catch (e) {
+      setErrorMsg(errMsg(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -153,16 +204,16 @@ export default function TransferDetailPage() {
               Internal Transfer
             </div>
             <h1 style={{ fontSize: 24, fontWeight: 700, margin: '4px 0 0', color: 'var(--color-text-primary)' }}>
-              {existingTransfer ? existingTransfer.reference : 'New Transfer'}
+              {doc ? doc.reference : 'New Transfer'}
             </h1>
           </div>
 
           {/* Stepper */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {(['DRAFT', 'READY', 'DONE'] as DocumentStatus[]).map((st, idx) => {
-              const active = status === st;
+              const active = status === st || (st === 'READY' && status === 'WAITING');
               const isPast =
-                (st === 'DRAFT' && (status === 'READY' || status === 'DONE')) ||
+                (st === 'DRAFT' && (status === 'READY' || status === 'WAITING' || status === 'DONE')) ||
                 (st === 'READY' && status === 'DONE');
               return (
                 <div key={st} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -190,6 +241,9 @@ export default function TransferDetailPage() {
                 </div>
               );
             })}
+            {status === 'WAITING' && (
+              <span className="badge badge-waiting" style={{ marginLeft: 8 }}>WAITING FOR STOCK</span>
+            )}
             {status === 'CANCELLED' && (
               <span className="badge badge-canceled" style={{ marginLeft: 8 }}>CANCELLED</span>
             )}
@@ -200,17 +254,17 @@ export default function TransferDetailPage() {
         <div style={{ display: 'flex', gap: 10, marginBottom: 24, flexWrap: 'wrap' }}>
           {status === 'DRAFT' && (
             <>
-              <button className="btn btn-primary" onClick={handleMarkReady}>
+              <button className="btn btn-primary" onClick={handleMarkReady} disabled={busy}>
                 Mark as Ready
               </button>
-              <button className="btn btn-secondary" onClick={handleSaveDraft}>
+              <button className="btn btn-secondary" onClick={handleSaveDraft} disabled={busy}>
                 Save Draft
               </button>
             </>
           )}
 
-          {status === 'READY' && (
-            <button className="btn btn-primary" onClick={handleValidate} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {canValidate && (
+            <button className="btn btn-primary" onClick={handleValidate} disabled={busy} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <CheckCircle size={16} /> Validate Transfer
             </button>
           )}
@@ -220,7 +274,7 @@ export default function TransferDetailPage() {
           </button>
 
           {!isReadonly && (
-            <button className="btn btn-danger" onClick={handleCancel} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button className="btn btn-danger" onClick={handleCancel} disabled={busy} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <X size={16} /> Cancel
             </button>
           )}
@@ -254,7 +308,7 @@ export default function TransferDetailPage() {
               className="select"
               value={sourceLoc}
               onChange={e => setSourceLoc(e.target.value)}
-              disabled={isReadonly}
+              disabled={isReadonly || !!doc}
               style={{ width: '100%' }}
             >
               {allLocations.map(loc => (
@@ -271,7 +325,7 @@ export default function TransferDetailPage() {
               className="select"
               value={destLoc}
               onChange={e => setDestLoc(e.target.value)}
-              disabled={isReadonly}
+              disabled={isReadonly || !!doc}
               style={{ width: '100%' }}
             >
               {allLocations.map(loc => (
@@ -330,7 +384,7 @@ export default function TransferDetailPage() {
               </thead>
               <tbody>
                 {lines.map((line, idx) => (
-                  <tr key={line.id}>
+                  <tr key={line.id} style={line.isInsufficient ? { background: 'var(--color-error-bg)' } : undefined}>
                     <td>
                       {isReadonly ? (
                         line.productName
@@ -341,12 +395,17 @@ export default function TransferDetailPage() {
                           onChange={e => handleProductChange(idx, e.target.value)}
                           style={{ width: '100%' }}
                         >
-                          {mockProducts.map(p => (
+                          {products.map(p => (
                             <option key={p.id} value={p.id}>
                               {p.name} ({p.sku}) — In Stock: {p.totalStock}
                             </option>
                           ))}
                         </select>
+                      )}
+                      {line.isInsufficient && (
+                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-error)', marginTop: 2 }}>
+                          Not enough stock at the source location
+                        </div>
                       )}
                     </td>
                     <td style={{ color: 'var(--color-text-muted)' }}>{line.productSku}</td>

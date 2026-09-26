@@ -2,7 +2,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, PackageCheck, List, LayoutGrid } from 'lucide-react';
-import { mockReceipts } from '../../data/mockData';
+import { receipts as receiptsApi } from '../../api';
+import { useApi } from '../../api/useApi';
+import { AsyncState } from '../../components/AsyncState';
+import { fmtDate } from '../../utils/format';
 import type { DocumentStatus } from '../../types';
 
 function StatusBadge({ status }: { status: DocumentStatus }) {
@@ -16,9 +19,12 @@ export default function ReceiptsPage() {
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [view, setView] = useState<'list' | 'kanban'>('list');
 
-  const statuses = ['ALL', 'DRAFT', 'READY', 'DONE', 'CANCELLED'];
+  const { data: receiptList, loading, error, reload } = useApi(() => receiptsApi.list());
+  if (!receiptList) return <AsyncState loading={loading} error={error} onRetry={reload} />;
 
-  const filtered = mockReceipts.filter(r => {
+  const statuses = ['ALL', 'DRAFT', 'WAITING', 'READY', 'DONE', 'CANCELLED'];
+
+  const filtered = receiptList.filter(r => {
     const q = search.toLowerCase();
     const matchSearch = !q || r.reference.toLowerCase().includes(q) || r.supplier.toLowerCase().includes(q);
     const matchStatus = statusFilter === 'ALL' || r.status === statusFilter;
@@ -100,7 +106,7 @@ export default function ReceiptsPage() {
                         <td className="table-cell-muted">vendor</td>
                         <td>{r.warehouseName}</td>
                         <td>{r.supplier}</td>
-                        <td className="table-cell-muted">{r.scheduledDate}</td>
+                        <td className="table-cell-muted">{fmtDate(r.scheduledDate)}</td>
                         <td><StatusBadge status={r.status} /></td>
                       </tr>
                     ))}
@@ -108,7 +114,7 @@ export default function ReceiptsPage() {
                 </table>
               </div>
               <div className="pagination">
-                <span className="pagination-info">Showing {filtered.length} of {mockReceipts.length} receipts</span>
+                <span className="pagination-info">Showing {filtered.length} of {receiptList.length} receipts</span>
                 <div className="pagination-controls">
                   <button className="page-btn" disabled>←</button>
                   <button className="page-btn active">1</button>
@@ -120,7 +126,7 @@ export default function ReceiptsPage() {
         ) : (
           <div style={{ padding: 'var(--space-4)' }}>
             <div className="kanban-board">
-              {['DRAFT', 'READY', 'DONE', 'CANCELLED'].map(col => (
+              {['DRAFT', 'WAITING', 'READY', 'DONE', 'CANCELLED'].map(col => (
                 <div className="kanban-column" key={col}>
                   <div className="kanban-column-header">
                     <StatusBadge status={col as DocumentStatus} />
@@ -130,7 +136,7 @@ export default function ReceiptsPage() {
                     <div className="kanban-card" key={r.id} onClick={() => navigate(`/receipts/${r.id}`)}>
                       <div className="table-cell-mono" style={{ color: 'var(--color-accent)', fontSize: 'var(--font-size-xs)', marginBottom: 4 }}>{r.reference}</div>
                       <div style={{ fontWeight: 600, marginBottom: 2 }}>{r.supplier}</div>
-                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>{r.warehouseName} · {r.scheduledDate}</div>
+                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>{r.warehouseName} · {fmtDate(r.scheduledDate)}</div>
                     </div>
                   ))}
                 </div>

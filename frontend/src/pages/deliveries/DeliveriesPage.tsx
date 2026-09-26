@@ -2,7 +2,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Truck, List, LayoutGrid } from 'lucide-react';
-import { mockDeliveries } from '../../data/mockData';
+import { deliveries as deliveriesApi } from '../../api';
+import { useApi } from '../../api/useApi';
+import { AsyncState } from '../../components/AsyncState';
+import { fmtDate } from '../../utils/format';
 import type { DocumentStatus } from '../../types';
 
 function StatusBadge({ status }: { status: DocumentStatus }) {
@@ -16,9 +19,12 @@ export default function DeliveriesPage() {
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [view, setView] = useState<'list' | 'kanban'>('list');
 
+  const { data: deliveryList, loading, error, reload } = useApi(() => deliveriesApi.list());
+  if (!deliveryList) return <AsyncState loading={loading} error={error} onRetry={reload} />;
+
   const statuses = ['ALL', 'DRAFT', 'WAITING', 'READY', 'DONE', 'CANCELLED'];
 
-  const filtered = mockDeliveries.filter(d => {
+  const filtered = deliveryList.filter(d => {
     const q = search.toLowerCase();
     const matchSearch = !q || d.reference.toLowerCase().includes(q) || d.contact.toLowerCase().includes(q);
     const matchStatus = statusFilter === 'ALL' || d.status === statusFilter;
@@ -95,7 +101,7 @@ export default function DeliveriesPage() {
                         <td>{d.sourceWarehouseName}</td>
                         <td className="table-cell-muted">vendor</td>
                         <td>{d.contact}</td>
-                        <td className="table-cell-muted">{d.scheduledDate}</td>
+                        <td className="table-cell-muted">{fmtDate(d.scheduledDate)}</td>
                         <td><StatusBadge status={d.status} /></td>
                       </tr>
                     ))}
@@ -103,7 +109,7 @@ export default function DeliveriesPage() {
                 </table>
               </div>
               <div className="pagination">
-                <span className="pagination-info">Showing {filtered.length} of {mockDeliveries.length} deliveries</span>
+                <span className="pagination-info">Showing {filtered.length} of {deliveryList.length} deliveries</span>
                 <div className="pagination-controls">
                   <button className="page-btn" disabled>←</button>
                   <button className="page-btn active">1</button>
@@ -125,7 +131,7 @@ export default function DeliveriesPage() {
                     <div className="kanban-card" key={d.id} onClick={() => navigate(`/deliveries/${d.id}`)}>
                       <div className="table-cell-mono" style={{ color: 'var(--color-accent)', fontSize: 'var(--font-size-xs)', marginBottom: 4 }}>{d.reference}</div>
                       <div style={{ fontWeight: 600, marginBottom: 2 }}>{d.contact}</div>
-                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>{d.sourceWarehouseName} · {d.scheduledDate}</div>
+                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>{d.sourceWarehouseName} · {fmtDate(d.scheduledDate)}</div>
                     </div>
                   ))}
                 </div>
