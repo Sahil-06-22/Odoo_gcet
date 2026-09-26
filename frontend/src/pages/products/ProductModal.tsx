@@ -36,11 +36,60 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
   const set = (field: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm(prev => ({ ...prev, [field]: e.target.value }));
 
+  // 
   const validate = () => {
     const errs: Record<string, string> = {};
-    if (!form.name.trim()) errs.name = 'Product name is required.';
-    if (!form.sku.trim()) errs.sku = 'SKU is required.';
-    if (!form.category.trim()) errs.category = 'Category is required.';
+
+    // Product name validation
+    const productName = form.name.trim();
+
+    if (!productName) {
+      errs.name = 'Product name is required.';
+    } else if (productName.length < 2) {
+      errs.name = 'Product name must be at least 2 characters.';
+    } else if (productName.length > 100) {
+      errs.name = 'Product name must not exceed 100 characters.';
+    }
+
+    // SKU validation
+    const sku = form.sku.trim();
+
+    if (!sku) {
+      errs.sku = 'SKU is required.';
+    } else if (!/^[A-Za-z0-9_-]+$/.test(sku)) {
+      errs.sku = 'SKU can contain only letters, numbers, hyphens and underscores.';
+    } else if (sku.length < 2 || sku.length > 30) {
+      errs.sku = 'SKU must be between 2 and 30 characters.';
+    }
+
+    // Category validation
+    if (!form.category.trim()) {
+      errs.category = 'Category is required.';
+    }
+
+    // Initial stock validation
+    if (!isEdit && form.initialStock < 0) {
+      errs.initialStock = 'Initial stock cannot be negative.';
+    }
+
+    // Reorder threshold validation
+    if (form.reorderThreshold !== '') {
+      const threshold = Number(form.reorderThreshold);
+
+      if (Number.isNaN(threshold) || threshold < 0) {
+        errs.reorderThreshold = 'Minimum stock threshold cannot be negative.';
+      }
+    }
+
+    // Reorder quantity validation
+    if (form.reorderQty !== '') {
+      const reorderQty = Number(form.reorderQty);
+
+      if (Number.isNaN(reorderQty) || reorderQty <= 0) {
+        errs.reorderQty = 'Reorder quantity must be greater than 0.';
+      }
+    }
+
     return errs;
   };
 
@@ -162,6 +211,22 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
                     <label className="form-label" htmlFor="prod-initial-stock">Initial Stock</label>
                     <input id="prod-initial-stock" type="number" min="0" className="input" value={form.initialStock}
                       onChange={e => setForm(prev => ({ ...prev, initialStock: parseInt(e.target.value) || 0 }))} />
+                    <input
+                      id="prod-initial-stock"
+                      type="number"
+                      min="0"
+                      className={`input${errors.initialStock ? ' error' : ''}`}
+                      value={form.initialStock}
+                      onChange={e =>
+                        setForm(prev => ({
+                          ...prev,
+                          initialStock: Number(e.target.value)
+                        }))
+                      }
+                    />
+                    {errors.initialStock && (
+                      <span className="form-error">{errors.initialStock}</span>
+                    )}
                   </div>
                   <div className="form-group">
                     <label className="form-label" htmlFor="prod-warehouse">Warehouse</label>
@@ -181,13 +246,37 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label" htmlFor="prod-threshold">Min Stock Threshold</label>
-                  <input id="prod-threshold" type="number" min="0" className="input" placeholder="e.g. 10"
-                    value={form.reorderThreshold} onChange={set('reorderThreshold')} />
+                  {/* { <input id="prod-threshold" type="number" min="0" className="input" placeholder="e.g. 10"
+                    value={form.reorderThreshold} onChange={set('reorderThreshold')} /> } */}
+                  <input
+                    id="prod-threshold"
+                    type="number"
+                    min="0"
+                    className={`input${errors.reorderThreshold ? ' error' : ''}`}
+                    placeholder="e.g. 10"
+                    value={form.reorderThreshold}
+                    onChange={set('reorderThreshold')}
+                  />
+                  {errors.reorderThreshold && (
+                    <span className="form-error">{errors.reorderThreshold}</span>
+                  )}
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label" htmlFor="prod-reorder-qty">Reorder Quantity</label>
-                  <input id="prod-reorder-qty" type="number" min="1" className="input" placeholder="e.g. 50"
-                    value={form.reorderQty} onChange={set('reorderQty')} />
+                  {/* <input id="prod-reorder-qty" type="number" min="1" className="input" placeholder="e.g. 50"
+                    value={form.reorderQty} onChange={set('reorderQty')} /> */}
+                  <input
+                    id="prod-reorder-qty"
+                    type="number"
+                    min="1"
+                    className={`input${errors.reorderQty ? ' error' : ''}`}
+                    placeholder="e.g. 50"
+                    value={form.reorderQty}
+                    onChange={set('reorderQty')}
+                  />
+                  {errors.reorderQty && (
+                    <span className="form-error">{errors.reorderQty}</span>
+                  )}
                 </div>
               </div>
             </div>
