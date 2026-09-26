@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "OperationLine" ALTER COLUMN "doneQty" DROP NOT NULL,
+ALTER COLUMN "doneQty" DROP DEFAULT;

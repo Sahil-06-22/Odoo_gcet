@@ -1,0 +1,227 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  INVENTORY_MANAGER
+  WAREHOUSE_STAFF
+}
+
+enum DocumentStatus {
+  DRAFT
+  WAITING
+  READY
+  DONE
+  CANCELLED
+}
+
+enum OperationType {
+  RECEIPT
+  DELIVERY
+  TRANSFER
+}
+
+enum MovementType {
+  RECEIPT
+  DELIVERY
+  TRANSFER
+  ADJUSTMENT
+}
+
+model User {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  passwordHash  String
+  role          UserRole @default(WAREHOUSE_STAFF)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  refreshTokens  RefreshToken[]
+  passwordResets PasswordReset[]
+  operations     Operation[]
+  adjustments    Adjustment[]
+  ledgerEntries  LedgerEntry[]
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PasswordReset {
+  id        String    @id @default(cuid())
+  userId    String
+  otpHash   String
+  expiresAt DateTime
+  attempts  Int       @default(0)
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Category {
+  id       String    @id @default(cuid())
+  name     String    @unique
+  products Product[]
+}
+
+model Product {
+  id               String   @id @default(cuid())
+  sku              String   @unique
+  name             String
+  categoryId       String
+  unitOfMeasure    String   @default("Units")
+  isActive         Boolean  @default(true)
+  reorderThreshold Int?
+  reorderQty       Int?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  category      Category        @relation(fields: [categoryId], references: [id])
+  stockLevels   StockLevel[]
+  lines         OperationLine[]
+  adjustments   Adjustment[]
+  ledgerEntries LedgerEntry[]
+
+  @@index([categoryId])
+  @@index([name])
+}
+
+model Warehouse {
+  id        String     @id @default(cuid())
+  name      String
+  shortCode String     @unique
+  address   String     @default("")
+  locations Location[]
+}
+
+model Location {
+  id          String    @id @default(cuid())
+  name        String
+  shortCode   String
+  createdAt   DateTime  @default(now()) // first-created location is the warehouse's default
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  stockLevels  StockLevel[]
+  adjustments  Adjustment[]
+  operationsIn  Operation[] @relation("OperationDest")
+  operationsOut Operation[] @relation("OperationSource")
+
+  @@unique([warehouseId, shortCode])
+}
+
+// Current on-hand quantity of a product at a location.
+model StockLevel {
+  productId  String
+  locationId String
+  quantity   Int      @default(0)
+  updatedAt  DateTime @updatedAt
+
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@id([productId, locationId])
+  @@index([locationId])
+}
+
+// Receipts, delivery orders and internal transfers share one table; `type` discriminates.
+//   RECEIPT  : destLocation set, contact = supplier
+//   DELIVERY : sourceLocation set, contact = customer, address = delivery address
+//   TRANSFER : both set
+model Operation {
+  id               String         @id @default(cuid())
+  type             OperationType
+  reference        String         @unique
+  status           DocumentStatus @default(DRAFT)
+  contact          String         @default("")
+  address          String         @default("")
+  scheduledDate    DateTime       @default(now())
+  sourceLocationId String?
+  destLocationId   String?
+  responsibleId    String
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  sourceLocation Location? @relation("OperationSource", fields: [sourceLocationId], references: [id])
+  destLocation   Location? @relation("OperationDest", fields: [destLocationId], references: [id])
+  responsible    User      @relation(fields: [responsibleId], references: [id])
+  lines          OperationLine[]
+
+  @@index([type, status])
+  @@index([scheduledDate])
+}
+
+model OperationLine {
+  id          String    @id @default(cuid())
+  operationId String
+  productId   String
+  // Receipts: expectedQty = ordered, doneQty = actually received.
+  // Deliveries / transfers: expectedQty = quantity. doneQty null = "use expectedQty" on validate.
+  expectedQty Int
+  doneQty     Int?
+  operation   Operation @relation(fields: [operationId], references: [id], onDelete: Cascade)
+  product     Product   @relation(fields: [productId], references: [id])
+
+  @@index([operationId])
+}
+
+model Adjustment {
+  id          String         @id @default(cuid())
+  reference   String         @unique
+  productId   String
+  locationId  String
+  recordedQty Int
+  countedQty  Int
+  difference  Int
+  reason      String         @default("")
+  status      DocumentStatus @default(DONE)
+  createdById String
+  createdAt   DateTime       @default(now())
+
+  product   Product  @relation(fields: [productId], references: [id])
+  location  Location @relation(fields: [locationId], references: [id])
+  createdBy User     @relation(fields: [createdById], references: [id])
+}
+
+// Append-only stock ledger. Never updated or deleted by application code.
+model LedgerEntry {
+  id           String         @id @default(cuid())
+  productId    String
+  movementType MovementType
+  reference    String
+  fromLabel    String
+  toLabel      String
+  contact      String         @default("")
+  quantity     Int // signed: + adds stock to the company, - removes, 0-net for transfers (qty moved shown positive)
+  resultingQty Int // product total on hand after this movement
+  status       DocumentStatus @default(DONE)
+  actorId      String
+  createdAt    DateTime       @default(now())
+
+  product Product @relation(fields: [productId], references: [id])
+  actor   User    @relation(fields: [actorId], references: [id])
+
+  @@index([productId])
+  @@index([movementType, createdAt])
+}
+
+// Sequence counters for document references (WH/IN/0001 ...).
+model Counter {
+  key   String @id
+  value Int    @default(0)
+}

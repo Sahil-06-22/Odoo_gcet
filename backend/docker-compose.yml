@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: stocksense-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: stocksense
+      POSTGRES_PASSWORD: stocksense
+      POSTGRES_DB: stocksense
+    ports:
+      - "5442:5432"   # non-default port so it does not clash with a local Postgres
+    volumes:
+      - stocksense_pg:/var/lib/postgresql/data
+volumes:
+  stocksense_pg:
